@@ -6,7 +6,7 @@ const path = require("node:path");
 const Module = require("node:module");
 const load = Module._load;
 Module._load = function (name, ...args) {
-  if (name === "obsidian") return { Plugin: class {}, PluginSettingTab: class {}, ItemView: class {}, Platform: { isDesktopApp: true } };
+  if (name === "obsidian") return { Plugin: class {}, PluginSettingTab: class {}, ItemView: class {}, FuzzySuggestModal: class {}, Platform: { isDesktopApp: true } };
   return load.call(this, name, ...args);
 };
 const Plugin = require("../main.js");

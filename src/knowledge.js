@@ -14,8 +14,10 @@ class KnowledgeBase {
     this.store = store;
   }
   async index() {
-    const files = this.vault.getMarkdownFiles();
+    const files = this.vault.getMarkdownFiles().filter(file => !isArchivePath(file.path));
     const existing = await this.store.list();
+    const archives = existing.filter(e => isArchivePath(e.path)).map(e => e.id);
+    if (archives.length) await this.store.delete(archives);
     const paths = new Set(files.map(f => f.path));
     for (const file of files) {
       const chunks = chunkNote(file.path, await this.vault.cachedRead(file));
@@ -24,13 +26,14 @@ class KnowledgeBase {
       const newIds = new Set(chunks.map(c => c.id));
       await this.store.delete(existing.filter(e => e.path === file.path && !newIds.has(e.id)).map(e => e.id));
     }
-    await this.store.delete(existing.filter(e => typeof e.path === "string" && !paths.has(e.path)).map(e => e.id));
+    await this.store.delete(existing.filter(e => typeof e.path === "string" && !isArchivePath(e.path) && !paths.has(e.path)).map(e => e.id));
     return files.length;
   }
   async search(query) {
     const [vector] = await this.models.embed([query]);
-    return this.store.search(vector);
+    return (await this.store.search(vector)).filter(result => !isArchivePath(result.path));
   }
 }
 
 module.exports = { KnowledgeBase, chunkNote };
+const { isArchivePath } = require("./archive");

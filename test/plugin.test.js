@@ -7,10 +7,15 @@ let respond;
 class Plugin {}
 class PluginSettingTab {}
 class ItemView {}
+class FuzzySuggestModal {
+  constructor() { FuzzySuggestModal.current = this; }
+  setPlaceholder() {}
+  open() {}
+}
 class Notice { constructor(message) { Notice.messages.push(message); } }
 Notice.messages = [];
 const obsidian = {
-  Plugin, PluginSettingTab, ItemView, Notice, Setting: class {},
+  Plugin, PluginSettingTab, ItemView, FuzzySuggestModal, Notice, Setting: class {},
   requestUrl: async options => {
     requests.push(options);
     return respond(options);
@@ -24,6 +29,22 @@ const LLMPlugin = require("../main.js");
 Module._load = load;
 const { DEFAULTS, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation } = LLMPlugin.test;
 const response = json => ({ status: 200, json });
+function mockVault() {
+  const files = new Map();
+  return {
+    getFiles: () => [...files.values()].filter(f => f.extension),
+    getAbstractFileByPath: path => files.get(path),
+    createFolder: async path => { files.set(path, { path }); },
+    create: async (path, content) => {
+      if (files.has(path)) throw Error("File already exists");
+      const file = { path, extension: path.split(".").pop(), content };
+      files.set(path, file);
+      return file;
+    },
+    read: async file => file.content,
+    process: async (file, callback) => { file.content = callback(file.content); }
+  };
+}
 
 test("validates endpoint URLs and builds model requests", async () => {
   assert.throws(() => endpoint("file:///etc/passwd", "/api"), /HTTP/);
@@ -156,7 +177,7 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   plugin.addSettingTab = () => {};
   plugin.addRibbonIcon = () => {};
   plugin.addCommand = command => commands.push(command.id);
-  plugin.app = {};
+  plugin.app = { vault: mockVault() };
   await plugin.onload();
   assert.deepEqual(commands, ["open-chat", "index-vault", "generate-wiki"]);
   const view = factory({});
@@ -212,7 +233,7 @@ test("automatic compaction keeps original conversation and input when summarizat
   plugin.addSettingTab = () => {};
   plugin.addRibbonIcon = () => {};
   plugin.addCommand = () => {};
-  plugin.app = {};
+  plugin.app = { vault: mockVault() };
   await plugin.onload();
   const view = factory({});
   view.contentEl = new Element();
@@ -245,7 +266,7 @@ test("chat automatically compacts and sends the summary on the next question", a
   plugin.addSettingTab = () => {};
   plugin.addRibbonIcon = () => {};
   plugin.addCommand = () => {};
-  plugin.app = {};
+  plugin.app = { vault: mockVault() };
   await plugin.onload();
   const view = factory({});
   view.contentEl = new Element();
@@ -275,4 +296,101 @@ test("answer includes compacted summary alongside recent history", async () => {
   assert.match(messages[1].content, /earlier summary/);
   assert.equal(messages[2].content, "recent");
   assert.equal(messages[3].content, "next");
+});
+
+test("archive persists the full transcript and compacted context and restores it", async () => {
+  class Element {
+    constructor() { this.children = []; this.value = ""; }
+    empty() { this.children = []; }
+    setText(text) { this.text = text; }
+    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
+    createDiv() { return this.createEl("div"); }
+  }
+  const plugin = new LLMPlugin();
+  let factory;
+  plugin.loadData = async () => ({ useRetrieval: false });
+  plugin.registerView = (_, create) => { factory = create; };
+  plugin.addSettingTab = () => {};
+  plugin.addRibbonIcon = () => {};
+  plugin.addCommand = () => {};
+  plugin.app = { vault: mockVault() };
+  await plugin.onload();
+  const view = factory({});
+  view.contentEl = new Element();
+  await view.onOpen();
+  const [, transcript, input, , send, , clear, , restore] = view.contentEl.children;
+  respond = () => response({ message: { content: "reply" } });
+  for (let i = 0; i < 6; i++) {
+    input.value = `question ${i}`;
+    await send.onclick();
+  }
+  const files = plugin.app.vault.getFiles();
+  assert.equal(files.length, 1);
+  const saved = JSON.parse(files[0].content);
+  assert.equal(saved.messages.length, 12);
+  assert.equal(saved.history.length, 6);
+  assert.equal(saved.summary, "reply");
+  clear.onclick();
+  assert.equal(view.messages.length, 0);
+  restore.onclick();
+  await FuzzySuggestModal.current.onChooseItem(files[0]);
+  assert.deepEqual(view.messages, saved.messages);
+  assert.deepEqual(view.history, saved.history);
+  assert.equal(view.summary, saved.summary);
+  assert.equal(transcript.children.length, 12);
+  input.value = "continued";
+  await send.onclick();
+  assert.equal(JSON.parse(files[0].content).messages.length, 14);
+});
+
+test("archive save conflict preserves unsaved chat and blocks clear", async () => {
+  class Element {
+    constructor() { this.children = []; this.value = ""; }
+    empty() { this.children = []; }
+    setText() {}
+    createEl() { const child = new Element(); this.children.push(child); return child; }
+    createDiv() { return this.createEl(); }
+  }
+  const plugin = new LLMPlugin();
+  let factory;
+  plugin.loadData = async () => ({ useRetrieval: false });
+  plugin.registerView = (_, create) => { factory = create; };
+  plugin.addSettingTab = () => {};
+  plugin.addRibbonIcon = () => {};
+  plugin.addCommand = () => {};
+  plugin.app = { vault: mockVault() };
+  await plugin.onload();
+  const view = factory({});
+  view.contentEl = new Element();
+  await view.onOpen();
+  respond = () => response({ message: { content: "reply" } });
+  const [, , input, , send, , clear] = view.contentEl.children;
+  input.value = "first";
+  await send.onclick();
+  const file = plugin.app.vault.getFiles()[0];
+  file.content = "edited elsewhere";
+  input.value = "second";
+  await send.onclick();
+  assert.equal(file.content, "edited elsewhere");
+  assert.equal(view.dirty, true);
+  clear.onclick();
+  assert.equal(view.messages.length, 4);
+});
+
+test("archive paths are excluded and previously indexed chat chunks are removed", async () => {
+  const deleted = [], embedded = [], read = [];
+  const files = [{ path: "LLM Chat Archives/old.md" }, { path: "LLM Chat Archives/nested/a.md" },
+    { path: "LLM Chat Archives elsewhere.md" }, { path: "note.md" }];
+  const vault = { getMarkdownFiles: () => files, cachedRead: async f => { read.push(f.path); return "note"; } };
+  const store = {
+    list: async () => [{ id: "archive", path: "LLM Chat Archives/old.md" }],
+    delete: async ids => deleted.push(...ids),
+    upsert: async () => {},
+    search: async () => [{ path: "LLM Chat Archives/old.md", text: "private" }, { path: "note.md", text: "note" }]
+  };
+  const kb = new KnowledgeBase(vault, { embed: async texts => { embedded.push(...texts); return texts.map(() => [1]); } }, store);
+  assert.equal(await kb.index(), 2);
+  assert.deepEqual(read, ["LLM Chat Archives elsewhere.md", "note.md"]);
+  assert.ok(deleted.includes("archive"));
+  assert.deepEqual(await kb.search("question"), [{ path: "note.md", text: "note" }]);
 });

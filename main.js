@@ -7,6 +7,75 @@ var __commonJS = (cb, mod) => function __require() {
   }
 };
 
+// src/archive.js
+var require_archive = __commonJS({
+  "src/archive.js"(exports2, module2) {
+    var { FuzzySuggestModal } = require("obsidian");
+    var ARCHIVE_FOLDER = "LLM Chat Archives";
+    function isArchivePath(path) {
+      return typeof path === "string" && (path === ARCHIVE_FOLDER || path.startsWith(ARCHIVE_FOLDER + "/"));
+    }
+    function parseArchive(content) {
+      const data = JSON.parse(content);
+      const validMessages = (messages) => Array.isArray(messages) && messages.every((message) => message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string");
+      if (!data || data.version !== 1 || typeof data.summary !== "string" || !validMessages(data.history) || !validMessages(data.messages)) {
+        throw new Error("Invalid or unsupported chat archive.");
+      }
+      return { summary: data.summary, history: data.history, messages: data.messages };
+    }
+    var ChatArchives = class {
+      constructor(vault) {
+        this.vault = vault;
+      }
+      list() {
+        return this.vault.getFiles().filter((file) => isArchivePath(file.path) && file.extension === "json").sort((a, b) => b.path.localeCompare(a.path));
+      }
+      async load(file) {
+        if (!file || !isArchivePath(file.path) || file.extension !== "json") throw new Error("Not a chat archive.");
+        const content = await this.vault.read(file);
+        return { ...parseArchive(content), file, content };
+      }
+      async save(state, previous) {
+        const content = JSON.stringify({ version: 1, summary: state.summary, history: state.history, messages: state.messages }, null, 2) + "\n";
+        if (previous) {
+          if (!isArchivePath(previous.file.path) || previous.file.extension !== "json" || this.vault.getAbstractFileByPath(previous.file.path) !== previous.file) {
+            throw new Error("The archive was moved or deleted. Restore it again before saving.");
+          }
+          await this.vault.process(previous.file, (current) => {
+            if (current !== previous.content) throw new Error("The archive changed externally. Restore it again before saving.");
+            return content;
+          });
+          return { file: previous.file, content };
+        }
+        if (!this.vault.getAbstractFileByPath(ARCHIVE_FOLDER)) await this.vault.createFolder(ARCHIVE_FOLDER);
+        const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+        let path = `${ARCHIVE_FOLDER}/${stamp}.json`, suffix = 1;
+        while (this.vault.getAbstractFileByPath(path)) path = `${ARCHIVE_FOLDER}/${stamp}-${suffix++}.json`;
+        const file = await this.vault.create(path, content);
+        return { file, content };
+      }
+    };
+    var ArchivePicker = class extends FuzzySuggestModal {
+      constructor(app, files, onChoose) {
+        super(app);
+        this.files = files;
+        this.onChoose = onChoose;
+        this.setPlaceholder("Choose a chat archive to restore");
+      }
+      getItems() {
+        return this.files;
+      }
+      getItemText(file) {
+        return file.path;
+      }
+      onChooseItem(file) {
+        return this.onChoose(file);
+      }
+    };
+    module2.exports = { ARCHIVE_FOLDER, isArchivePath, parseArchive, ChatArchives, ArchivePicker };
+  }
+});
+
 // src/knowledge.js
 var require_knowledge = __commonJS({
   "src/knowledge.js"(exports2, module2) {
@@ -25,8 +94,10 @@ var require_knowledge = __commonJS({
         this.store = store;
       }
       async index() {
-        const files = this.vault.getMarkdownFiles();
+        const files = this.vault.getMarkdownFiles().filter((file) => !isArchivePath(file.path));
         const existing = await this.store.list();
+        const archives = existing.filter((e) => isArchivePath(e.path)).map((e) => e.id);
+        if (archives.length) await this.store.delete(archives);
         const paths = new Set(files.map((f) => f.path));
         for (const file of files) {
           const chunks = chunkNote2(file.path, await this.vault.cachedRead(file));
@@ -35,15 +106,16 @@ var require_knowledge = __commonJS({
           const newIds = new Set(chunks.map((c) => c.id));
           await this.store.delete(existing.filter((e) => e.path === file.path && !newIds.has(e.id)).map((e) => e.id));
         }
-        await this.store.delete(existing.filter((e) => typeof e.path === "string" && !paths.has(e.path)).map((e) => e.id));
+        await this.store.delete(existing.filter((e) => typeof e.path === "string" && !isArchivePath(e.path) && !paths.has(e.path)).map((e) => e.id));
         return files.length;
       }
       async search(query) {
         const [vector] = await this.models.embed([query]);
-        return this.store.search(vector);
+        return (await this.store.search(vector)).filter((result) => !isArchivePath(result.path));
       }
     };
     module2.exports = { KnowledgeBase: KnowledgeBase2, chunkNote: chunkNote2 };
+    var { isArchivePath } = require_archive();
   }
 });
 
@@ -51,6 +123,7 @@ var require_knowledge = __commonJS({
 var require_chat = __commonJS({
   "src/chat.js"(exports2, module2) {
     var { ItemView: ItemView2, Notice: Notice2 } = require("obsidian");
+    var { ChatArchives, ArchivePicker } = require_archive();
     function recommendModel2(task) {
       const text = task.toLowerCase();
       if (/\b(embed|embedding|embeddings|vectorize)\b/.test(text)) {
@@ -82,8 +155,11 @@ var require_chat = __commonJS({
         this.plugin = plugin;
         this.models = models;
         this.history = [];
+        this.messages = [];
         this.summary = "";
         this.busy = false;
+        this.archive = null;
+        this.dirty = false;
       }
       getViewType() {
         return "llms-chat";
@@ -107,23 +183,103 @@ var require_chat = __commonJS({
         const send = root.createEl("button", { text: "Send" });
         const compact = root.createEl("button", { text: "Compact conversation" });
         const clear = root.createEl("button", { text: "Clear conversation" });
+        const save = root.createEl("button", { text: "Save archive" });
+        const restore = root.createEl("button", { text: "Restore archive" });
+        const saveCopy = root.createEl("button", { text: "Save new archive copy" });
+        const archives = new ChatArchives(this.plugin.app.vault);
         const setBusy = (busy) => {
           this.busy = busy;
           send.disabled = busy;
           compact.disabled = busy;
           clear.disabled = busy;
+          save.disabled = busy;
+          restore.disabled = busy;
+          saveCopy.disabled = busy;
+        };
+        const saveArchive = async () => {
+          if (!this.messages.length) return;
+          this.archive = await archives.save(this, this.archive);
+          this.dirty = false;
+        };
+        const trySave = async () => {
+          try {
+            await saveArchive();
+          } catch (error) {
+            new Notice2(`Chat archive not saved: ${error.message}`);
+          }
         };
         const compactHistory = async () => {
           const result = await compactConversation2(this.models(), this.summary, this.history);
           this.summary = result.summary;
           this.history = result.history;
+          this.dirty = true;
         };
         clear.onclick = () => {
-          if (!this.busy) {
-            this.history = [];
-            this.summary = "";
-            transcript.empty();
+          if (this.busy) return;
+          if (this.dirty) {
+            new Notice2("Save the conversation before clearing it.");
+            return;
           }
+          this.history = [];
+          this.messages = [];
+          this.summary = "";
+          this.archive = null;
+          transcript.empty();
+        };
+        save.onclick = async () => {
+          if (this.busy) return;
+          setBusy(true);
+          try {
+            await saveArchive();
+            new Notice2("Chat archive saved.");
+          } catch (error) {
+            new Notice2(`Chat archive not saved: ${error.message}`);
+          } finally {
+            setBusy(false);
+          }
+        };
+        saveCopy.onclick = async () => {
+          if (this.busy || !this.messages.length) return;
+          setBusy(true);
+          try {
+            this.archive = await archives.save(this, null);
+            this.dirty = false;
+            new Notice2("New chat archive saved.");
+          } catch (error) {
+            new Notice2(`Chat archive not saved: ${error.message}`);
+          } finally {
+            setBusy(false);
+          }
+        };
+        restore.onclick = () => {
+          if (this.busy) return;
+          if (this.dirty) {
+            new Notice2("Save the conversation before restoring another archive.");
+            return;
+          }
+          const files = archives.list();
+          if (!files.length) {
+            new Notice2("No chat archives found.");
+            return;
+          }
+          new ArchivePicker(this.plugin.app, files, async (file) => {
+            if (this.busy || this.dirty) return;
+            setBusy(true);
+            try {
+              const data = await archives.load(file);
+              this.summary = data.summary;
+              this.history = data.history;
+              this.messages = data.messages;
+              this.archive = { file: data.file, content: data.content };
+              this.dirty = false;
+              transcript.empty();
+              for (const message of this.messages) transcript.createEl("p", { text: `${message.role === "user" ? "You" : "Assistant"}: ${message.content}` });
+            } catch (error) {
+              new Notice2(`Could not restore chat: ${error.message}`);
+            } finally {
+              setBusy(false);
+            }
+          }).open();
         };
         compact.onclick = async () => {
           if (this.busy) return;
@@ -132,6 +288,7 @@ var require_chat = __commonJS({
             if (this.history.length <= 4) new Notice2("Not enough conversation to compact.");
             else {
               await compactHistory();
+              await trySave();
               new Notice2("Conversation compacted.");
             }
           } catch (error) {
@@ -150,7 +307,10 @@ var require_chat = __commonJS({
             if (this.history.length >= 10) await compactHistory();
             const answer = await this.plugin.answer(question, this.history, this.summary);
             this.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
+            this.messages.push({ role: "user", content: question }, { role: "assistant", content: answer });
+            this.dirty = true;
             transcript.createEl("p", { text: `Assistant: ${answer}` });
+            await trySave();
           } catch (error) {
             input.value = question;
             transcript.createEl("p", { text: `Error: ${error.message}` });

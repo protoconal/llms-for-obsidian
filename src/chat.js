@@ -1,4 +1,5 @@
 const { ItemView, Notice } = require("obsidian");
+const { ChatArchives, ArchivePicker } = require("./archive");
 
 function recommendModel(task) {
   const text = task.toLowerCase();
@@ -33,8 +34,11 @@ class ChatView extends ItemView {
     this.plugin = plugin;
     this.models = models;
     this.history = [];
+    this.messages = [];
     this.summary = "";
     this.busy = false;
+    this.archive = null;
+    this.dirty = false;
   }
   getViewType() { return "llms-chat"; }
   getDisplayText() { return "LLM Chat"; }
@@ -50,24 +54,83 @@ class ChatView extends ItemView {
     const send = root.createEl("button", { text: "Send" });
     const compact = root.createEl("button", { text: "Compact conversation" });
     const clear = root.createEl("button", { text: "Clear conversation" });
+    const save = root.createEl("button", { text: "Save archive" });
+    const restore = root.createEl("button", { text: "Restore archive" });
+    const saveCopy = root.createEl("button", { text: "Save new archive copy" });
+    const archives = new ChatArchives(this.plugin.app.vault);
     const setBusy = busy => {
       this.busy = busy;
       send.disabled = busy;
       compact.disabled = busy;
       clear.disabled = busy;
+      save.disabled = busy;
+      restore.disabled = busy;
+      saveCopy.disabled = busy;
+    };
+    const saveArchive = async () => {
+      if (!this.messages.length) return;
+      this.archive = await archives.save(this, this.archive);
+      this.dirty = false;
+    };
+    const trySave = async () => {
+      try { await saveArchive(); }
+      catch (error) { new Notice(`Chat archive not saved: ${error.message}`); }
     };
     const compactHistory = async () => {
       const result = await compactConversation(this.models(), this.summary, this.history);
       this.summary = result.summary;
       this.history = result.history;
+      this.dirty = true;
     };
-    clear.onclick = () => { if (!this.busy) { this.history = []; this.summary = ""; transcript.empty(); } };
+    clear.onclick = () => {
+      if (this.busy) return;
+      if (this.dirty) { new Notice("Save the conversation before clearing it."); return; }
+      this.history = []; this.messages = []; this.summary = ""; this.archive = null; transcript.empty();
+    };
+    save.onclick = async () => {
+      if (this.busy) return;
+      setBusy(true);
+      try { await saveArchive(); new Notice("Chat archive saved."); }
+      catch (error) { new Notice(`Chat archive not saved: ${error.message}`); }
+      finally { setBusy(false); }
+    };
+    saveCopy.onclick = async () => {
+      if (this.busy || !this.messages.length) return;
+      setBusy(true);
+      try {
+        this.archive = await archives.save(this, null);
+        this.dirty = false;
+        new Notice("New chat archive saved.");
+      } catch (error) { new Notice(`Chat archive not saved: ${error.message}`); }
+      finally { setBusy(false); }
+    };
+    restore.onclick = () => {
+      if (this.busy) return;
+      if (this.dirty) { new Notice("Save the conversation before restoring another archive."); return; }
+      const files = archives.list();
+      if (!files.length) { new Notice("No chat archives found."); return; }
+      new ArchivePicker(this.plugin.app, files, async file => {
+        if (this.busy || this.dirty) return;
+        setBusy(true);
+        try {
+          const data = await archives.load(file);
+          this.summary = data.summary;
+          this.history = data.history;
+          this.messages = data.messages;
+          this.archive = { file: data.file, content: data.content };
+          this.dirty = false;
+          transcript.empty();
+          for (const message of this.messages) transcript.createEl("p", { text: `${message.role === "user" ? "You" : "Assistant"}: ${message.content}` });
+        } catch (error) { new Notice(`Could not restore chat: ${error.message}`); }
+        finally { setBusy(false); }
+      }).open();
+    };
     compact.onclick = async () => {
       if (this.busy) return;
       setBusy(true);
       try {
         if (this.history.length <= 4) new Notice("Not enough conversation to compact.");
-        else { await compactHistory(); new Notice("Conversation compacted."); }
+        else { await compactHistory(); await trySave(); new Notice("Conversation compacted."); }
       } catch (error) { new Notice(`Compaction failed: ${error.message}`); }
       finally { setBusy(false); }
     };
@@ -81,7 +144,10 @@ class ChatView extends ItemView {
         if (this.history.length >= 10) await compactHistory();
         const answer = await this.plugin.answer(question, this.history, this.summary);
         this.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
+        this.messages.push({ role: "user", content: question }, { role: "assistant", content: answer });
+        this.dirty = true;
         transcript.createEl("p", { text: `Assistant: ${answer}` });
+        await trySave();
       } catch (error) {
         input.value = question;
         transcript.createEl("p", { text: `Error: ${error.message}` });
