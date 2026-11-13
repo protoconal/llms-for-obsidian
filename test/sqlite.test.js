@@ -68,3 +68,21 @@ test("plugin selects SQLite only for desktop vaults and retains Chroma default",
   plugin.settings.vectorStore = "chroma";
   assert.equal(plugin.knowledge().store.constructor.name, "ChromaStore");
 });
+
+test("SQLite removes previously indexed archives even if subsequent embedding fails", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "obsidian-sqlite-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = path.join(dir, "vectors.sqlite3");
+  const store = new SQLiteStore(DEFAULTS, db);
+  await store.upsert([
+    { id: "archive", path: "LLM Chat Archives/private.md", text: "private" },
+    { id: "note", path: "note.md", text: "original" }
+  ], [[1, 0], [1, 0]]);
+  const vault = {
+    getMarkdownFiles: () => [{ path: "LLM Chat Archives/private.md" }, { path: "note.md" }],
+    cachedRead: async () => "updated"
+  };
+  const kb = new KnowledgeBase(vault, { embed: async () => { throw Error("offline"); } }, store);
+  await assert.rejects(kb.index(), /offline/);
+  assert.deepEqual(await store.list(), [{ id: "note", path: "note.md" }]);
+});

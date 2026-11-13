@@ -27,7 +27,7 @@ Module._load = function (name, ...args) {
 };
 const LLMPlugin = require("../main.js");
 Module._load = load;
-const { DEFAULTS, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation } = LLMPlugin.test;
+const { DEFAULTS, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation, searchNotes } = LLMPlugin.test;
 const response = json => ({ status: 200, json });
 function mockVault() {
   const files = new Map();
@@ -364,7 +364,7 @@ test("archive save conflict preserves unsaved chat and blocks clear", async () =
   view.contentEl = new Element();
   await view.onOpen();
   respond = () => response({ message: { content: "reply" } });
-  const [, , input, , send, , clear] = view.contentEl.children;
+  const [, , input, , send, , clear, , , saveCopy] = view.contentEl.children;
   input.value = "first";
   await send.onclick();
   const file = plugin.app.vault.getFiles()[0];
@@ -375,6 +375,11 @@ test("archive save conflict preserves unsaved chat and blocks clear", async () =
   assert.equal(view.dirty, true);
   clear.onclick();
   assert.equal(view.messages.length, 4);
+  await saveCopy.onclick();
+  assert.equal(plugin.app.vault.getFiles().length, 2);
+  assert.equal(view.dirty, false);
+  clear.onclick();
+  assert.equal(view.messages.length, 0);
 });
 
 test("archive paths are excluded and previously indexed chat chunks are removed", async () => {
@@ -393,4 +398,76 @@ test("archive paths are excluded and previously indexed chat chunks are removed"
   assert.deepEqual(read, ["LLM Chat Archives elsewhere.md", "note.md"]);
   assert.ok(deleted.includes("archive"));
   assert.deepEqual(await kb.search("question"), [{ path: "note.md", text: "note" }]);
+});
+
+test("full text search reads current notes, excludes archives and supports case-insensitive phrases", async () => {
+  const reads = [];
+  const vault = {
+    getMarkdownFiles: () => [{ path: "note.md" }, { path: "empty.md" }, { path: "LLM Chat Archives/private.md" }],
+    cachedRead: async file => { reads.push(file.path); return file.path === "note.md" ? "Hello World\nand more" : "nothing"; }
+  };
+  const results = await searchNotes(vault, "WORLD\nAND");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].file.path, "note.md");
+  assert.equal(results[0].excerpt, "Hello World and more");
+  assert.deepEqual(reads, ["note.md", "empty.md"]);
+  assert.deepEqual(await searchNotes(vault, "   "), []);
+});
+
+test("chat context mode can send the full active note or no vault context", async () => {
+  const plugin = new LLMPlugin();
+  plugin.settings = { ...DEFAULTS, useRetrieval: false };
+  const file = { path: "long.md", extension: "md" };
+  plugin.app = { workspace: { getActiveFile: () => file }, vault: { cachedRead: async () => "full note ".repeat(200) } };
+  requests = [];
+  respond = () => response({ message: { content: "ok" } });
+  await plugin.answer("question", [], "", "active");
+  const messages = JSON.parse(requests[0].body).messages;
+  assert.match(messages[1].content, /long\.md/);
+  assert.ok(messages[1].content.includes("full note ".repeat(200)));
+  assert.equal(requests.length, 1);
+  requests = [];
+  await plugin.answer("question", [], "", "none");
+  assert.equal(JSON.parse(requests[0].body).messages.length, 2);
+  file.path = "LLM Chat Archives/private.md";
+  await assert.rejects(plugin.answer("question", [], "", "active"), /non-archive/);
+  await assert.rejects(plugin.answer("question", [], "", "bad-mode"), /Unknown/);
+});
+
+test("text search button opens a result and context selection reaches chat", async () => {
+  class Element {
+    constructor() { this.children = []; this.value = ""; }
+    empty() { this.children = []; }
+    setText() {}
+    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
+    createDiv() { return this.createEl(); }
+  }
+  const plugin = new LLMPlugin();
+  let factory, opened;
+  const vault = mockVault();
+  const note = { path: "note.md", extension: "md" };
+  vault.getMarkdownFiles = () => [note];
+  vault.cachedRead = async () => "find this phrase";
+  plugin.loadData = async () => ({ useRetrieval: false });
+  plugin.registerView = (_, create) => { factory = create; };
+  plugin.addSettingTab = () => {};
+  plugin.addRibbonIcon = () => {};
+  plugin.addCommand = () => {};
+  plugin.app = { vault, workspace: { getActiveFile: () => note, getLeaf: () => ({ openFile: async file => { opened = file; } }) } };
+  await plugin.onload();
+  const view = factory({});
+  view.contentEl = new Element();
+  await view.onOpen();
+  const [, , input, , send, , , , , , , context, search, results] = view.contentEl.children;
+  input.value = "this phrase";
+  await search.onclick();
+  assert.match(results.children[0].text, /note\.md/);
+  await results.children[0].onclick();
+  assert.equal(opened, note);
+  context.value = "active";
+  context.onchange();
+  requests = [];
+  respond = () => response({ message: { content: "answer" } });
+  await send.onclick();
+  assert.match(JSON.parse(requests[0].body).messages[1].content, /find this phrase/);
 });

@@ -1,5 +1,6 @@
 const { ItemView, Notice } = require("obsidian");
 const { ChatArchives, ArchivePicker } = require("./archive");
+const { searchNotes } = require("./search");
 
 function recommendModel(task) {
   const text = task.toLowerCase();
@@ -39,6 +40,7 @@ class ChatView extends ItemView {
     this.busy = false;
     this.archive = null;
     this.dirty = false;
+    this.contextMode = plugin.settings.useRetrieval ? "retrieval" : "none";
   }
   getViewType() { return "llms-chat"; }
   getDisplayText() { return "LLM Chat"; }
@@ -57,6 +59,15 @@ class ChatView extends ItemView {
     const save = root.createEl("button", { text: "Save archive" });
     const restore = root.createEl("button", { text: "Restore archive" });
     const saveCopy = root.createEl("button", { text: "Save new archive copy" });
+    root.createEl("p", { text: "Chat context" });
+    const context = root.createEl("select", { attr: { "aria-label": "Chat context" } });
+    for (const [value, label] of [["retrieval", "Vault embeddings"], ["active", "Full active note"], ["none", "No vault context"]]) {
+      context.createEl("option", { text: label, attr: { value } });
+    }
+    context.value = this.contextMode;
+    context.onchange = () => { this.contextMode = context.value; };
+    const search = root.createEl("button", { text: "Search vault text" });
+    const searchResults = root.createDiv();
     const archives = new ChatArchives(this.plugin.app.vault);
     const setBusy = busy => {
       this.busy = busy;
@@ -66,6 +77,8 @@ class ChatView extends ItemView {
       save.disabled = busy;
       restore.disabled = busy;
       saveCopy.disabled = busy;
+      context.disabled = busy;
+      search.disabled = busy;
     };
     const saveArchive = async () => {
       if (!this.messages.length) return;
@@ -125,6 +138,25 @@ class ChatView extends ItemView {
         finally { setBusy(false); }
       }).open();
     };
+    search.onclick = async () => {
+      if (this.busy) return;
+      const query = input.value.trim();
+      if (!query) { new Notice("Enter text to search."); return; }
+      setBusy(true);
+      searchResults.empty();
+      try {
+        const results = await searchNotes(this.plugin.app.vault, query);
+        if (!results.length) searchResults.createEl("p", { text: "No matches found." });
+        for (const result of results) {
+          const button = searchResults.createEl("button", { text: `${result.file.path}: ${result.excerpt}` });
+          button.onclick = async () => {
+            try { await this.plugin.app.workspace.getLeaf(false).openFile(result.file); }
+            catch (error) { new Notice(`Could not open note: ${error.message}`); }
+          };
+        }
+      } catch (error) { new Notice(`Text search failed: ${error.message}`); }
+      finally { setBusy(false); }
+    };
     compact.onclick = async () => {
       if (this.busy) return;
       setBusy(true);
@@ -142,7 +174,7 @@ class ChatView extends ItemView {
       transcript.createEl("p", { text: `You: ${question}` });
       try {
         if (this.history.length >= 10) await compactHistory();
-        const answer = await this.plugin.answer(question, this.history, this.summary);
+        const answer = await this.plugin.answer(question, this.history, this.summary, this.contextMode);
         this.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
         this.messages.push({ role: "user", content: question }, { role: "assistant", content: answer });
         this.dirty = true;
