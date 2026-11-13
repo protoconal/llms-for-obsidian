@@ -95,6 +95,10 @@ jobs:
           pattern: llms-for-obsidian-*
           merge-multiple: true
           path: release
-      - run: gh release create "$GITHUB_REF_NAME" release/*.zip --repo "$GITHUB_REPOSITORY" --generate-notes --clobber
+      - run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" release/*.zip --repo "$GITHUB_REPOSITORY" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
