@@ -1,0 +1,9 @@
+{
+  "id": "llms-for-obsidian",
+  "name": "LLMs for Obsidian",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Local-first chat, retrieval and wiki generation.",
+  "author": "LLMs for Obsidian contributors",
+  "isDesktopOnly": false
+}
