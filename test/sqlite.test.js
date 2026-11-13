@@ -86,3 +86,20 @@ test("SQLite removes previously indexed archives even if subsequent embedding fa
   await assert.rejects(kb.index(), /offline/);
   assert.deepEqual(await store.list(), [{ id: "note", path: "note.md" }]);
 });
+
+test("SQLite reports recorded embedding metadata and resets a collection despite a mismatch", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "obsidian-sqlite-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = path.join(dir, "vectors.sqlite3");
+  const s = { ...DEFAULTS, collection: "meta" };
+  await new SQLiteStore(s, db).upsert([{ id: "a:0", path: "a.md", text: "héllo" }], [[1, 0]]);
+  const stats = await new SQLiteStore({ ...s, embeddingModel: "other" }, db).stats();
+  assert.equal(stats.chunks, 1);
+  assert.equal(stats.textBytes, 6);
+  assert.ok(stats.fileBytes > 0);
+  assert.deepEqual(stats.embedding, { provider: s.embeddingProvider, url: s.embeddingUrl, model: s.embeddingModel, dimensions: 2, matches: false });
+  const changed = new SQLiteStore({ ...s, embeddingModel: "other" }, db);
+  await changed.reset();
+  assert.equal((await changed.stats()).embedding, null);
+  await changed.upsert([{ id: "a:0", path: "a.md", text: "x" }], [[1, 0, 0]]);
+});

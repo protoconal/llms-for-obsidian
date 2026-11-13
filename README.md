@@ -8,9 +8,9 @@ The plugin reads Markdown notes from the current vault, splits them into 1,500-c
 
 `KnowledgeBase` depends on a small store contract: `list()`, `upsert(chunks, vectors)`, `delete(ids)` and `search(vector, limit)`. `ChromaStore` implements it using the ChromaDB v2 HTTP API; `SQLiteStore` uses SQLite and sqlite-vec's cosine distance function. SQLite performs an exact linear scan, so search cost grows with collection size. Results can differ from ChromaDB's distance metric. `ModelClient` supports Ollama and OpenAI-compatible chat and embedding APIs independently, so local embeddings can be used with a hosted chat model.
 
-Indexing is explicit, not automatic: rerun it after edits, renames or deletions. It upserts current chunks and removes stale chunks for indexed paths and deleted notes. Use a **dedicated collection per vault and embedding model**: indexing removes entries for paths absent from the current vault. Switching embedding models requires a new collection and reindexing. Large vaults and long notes may exceed model or server limits; use an embedding model with an adequate context window.
+Indexing is explicit until you run it once; afterwards it can be scheduled (see below). It upserts current chunks and removes stale chunks for indexed paths and deleted notes. Use a **dedicated collection per vault and embedding model**: indexing removes entries for paths absent from the current vault. Switching embedding models requires a new collection and reindexing. Large vaults and long notes may exceed model or server limits; use an embedding model with an adequate context window.
 
-For future efficient hourly indexing, Obsidian already exposes [`TFile.stat`](https://docs.obsidian.md/Reference/TypeScript+API/TFile) with [`mtime` and `size`](https://docs.obsidian.md/Reference/TypeScript+API/FileStats). Persist these per path and per vault, store, collection, embedding provider/model and chunking version; only read and re-embed changed files, reconcile deletes and renames, and record a new fingerprint only after a successful upsert and cleanup. An hourly registered timer could trigger the same serialized index operation. Timestamps and size are cheap but can miss edits that preserve both values; an optional content checksum or periodic full rebuild would catch those cases at extra I/O cost. This is a proposal, **not implemented**: current indexing rereads and embeds every note, and there is no hourly timer.
+For future efficient hourly indexing, Obsidian already exposes [`TFile.stat`](https://docs.obsidian.md/Reference/TypeScript+API/TFile) with [`mtime` and `size`](https://docs.obsidian.md/Reference/TypeScript+API/FileStats). Persist these per path and per vault, store, collection, embedding provider/model and chunking version; only read and re-embed changed files, reconcile deletes and renames, and record a new fingerprint only after a successful upsert and cleanup. An hourly registered timer could trigger the same serialized index operation. Timestamps and size are cheap but can miss edits that preserve both values; an optional content checksum or periodic full rebuild would catch those cases at extra I/O cost. This is now implemented; see Incremental and scheduled indexing.
 
 ## Setup
 
@@ -50,6 +50,24 @@ SQLite stores note text and embeddings unencrypted in `<vault>/.obsidian/plugins
 
 Conversation compaction does not compact ChromaDB's physical storage. Reindexing already removes stale indexed chunks logically, but is not a database vacuum. Back up the database and consult the documentation for your installed ChromaDB version before undertaking any physical maintenance; the plugin does not run database maintenance commands.
 
+## Incremental and scheduled indexing
+
+**Index vault for retrieval** is incremental: it stores each note's `TFile.stat` `[mtime, size]` in `index-state.json` (plugin folder) and re-embeds only notes whose values changed, deleting chunks for removed or renamed paths. The stat data is already in memory, so detecting changes reads no files. A fingerprint is saved only after the note's chunks are stored. **Full re-index of vault** ignores fingerprints, and changing the store, collection, embedding settings or chunking forces a full run.
+
+A timer checks every five minutes against persisted timestamps. Settings: **Auto-index interval (hours)**, default 1, runs an incremental index; **Full re-index interval (days)**, default 7, runs a full one. `0` disables either. Scheduling only starts after one successful manual index, is skipped while retrieval is off, and a failed run waits for the next interval. Edits that keep both mtime and size are caught by the full re-index.
+
+## Skills
+
+A skill is reusable instructions plus a context mode (`active`, `retrieval` or `none`). Built-ins: Summarize note, Extract action items, Find related notes. Add your own as Markdown files in `<vault>/LLM Skills/` or `<vault>/.obsidian/plugins/llms-for-obsidian/skills/`; the file name is the skill name and the body is the instruction. Optional front matter: `description:` and `context:`. Run one with the **Run skill** command (the result becomes a new note) or pick it in the chat panel. Skill files are instructions sent to your chat endpoint.
+
+## Database size and embedding tracking
+
+The settings page shows indexed notes, chunks and, for SQLite, text and file size. SQLite also records each collection's embedding provider, URL, model and dimensions, shows them with a warning if they differ from current settings, and offers **Reset collection** (click twice) to clear it for reindexing. ChromaDB shows counts only.
+
+## Live OpenRouter tests
+
+`test/openrouter.live.js` calls OpenRouter chat and embeddings with tiny token caps, and is skipped without `OPENROUTER_API_KEY`. CI passes the `openrouter_sk` repo secret (monthly budget $2.5) in `.github/workflows/test.yml` for pushes, PRs and a weekly run. Override models with `OPENROUTER_CHAT_MODEL` / `OPENROUTER_EMBEDDING_MODEL`.
+
 ## Privacy and limitations
 
 With defaults, note contents stay on the local services. Changing an endpoint to a remote service sends the relevant data to that service: indexing sends non-archive Markdown chunks to the embedding endpoint and, when selected, the ChromaDB endpoint; retrieval sends the question to the embedding endpoint; chat sends the question, conversation history and selected context (retrieved excerpts or the entire active note) to the chat endpoint; wiki generation sends the active note and excerpts to the chat endpoint. API keys are stored **unencrypted** in Obsidian's plugin data. Both vector stores retain note text and vectors; secure their files and network access. Only configure endpoints you trust.
@@ -58,4 +76,4 @@ Retrieved notes are untrusted input and may contain misleading instructions. The
 
 ## Development and verification
 
-Run `npm ci` and `npm test` with Node.js 18 or newer and an extension-enabled `sqlite3` CLI on PATH. The source modules are in `src/`; `npm run build` bundles them into the distributable `main.js`, which is checked in and must be rebuilt after source changes. SQLite integration tests use the real database and sqlite-vec binary; Obsidian and HTTP services are mocked. These do not replace a smoke test in Obsidian with the selected storage backend and model services. For a manual check, index a small vault, search and open a note, try both chat context modes, restore an archived chat, and generate a wiki page. Rename or delete a note, reindex, and verify old results are gone.
+Run `npm ci` and `npm test` with Node.js 18 or newer and an extension-enabled `sqlite3` CLI on PATH. The source modules are in `src/`; `npm run build` (esbuild with Svelte for the settings panel) bundles them into the distributable `main.js`, which is checked in and must be rebuilt after source changes. SQLite integration tests use the real database and sqlite-vec binary; Obsidian and HTTP services are mocked. These do not replace a smoke test in Obsidian with the selected storage backend and model services. For a manual check, index a small vault, search and open a note, try both chat context modes, restore an archived chat, and generate a wiki page. Rename or delete a note, reindex, and verify old results are gone.

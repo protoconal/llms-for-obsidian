@@ -1,0 +1,22 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y sqlite3
+      - run: npm ci
+      # Live OpenRouter tests are skipped automatically when the secret is unavailable (e.g. fork PRs).
+      - run: npm test
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.openrouter_sk }}

@@ -27,7 +27,7 @@ Module._load = function (name, ...args) {
 };
 const LLMPlugin = require("../main.js");
 Module._load = load;
-const { DEFAULTS, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation, searchNotes, parseArchive } = LLMPlugin.test;
+const { DEFAULTS, loadSkills, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation, searchNotes, parseArchive } = LLMPlugin.test;
 const response = json => ({ status: 200, json });
 function mockVault() {
   const files = new Map();
@@ -179,7 +179,7 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   plugin.addCommand = command => commands.push(command.id);
   plugin.app = { vault: mockVault() };
   await plugin.onload();
-  assert.deepEqual(commands, ["open-chat", "index-vault", "generate-wiki"]);
+  assert.deepEqual(commands, ["open-chat", "index-vault", "full-reindex-vault", "run-skill", "generate-wiki"]);
   const view = factory({});
   view.contentEl = new Element();
   respond = () => response({ message: { content: "hello" } });
@@ -465,7 +465,7 @@ test("text search button opens a result and context selection reaches chat", asy
   const view = factory({});
   view.contentEl = new Element();
   await view.onOpen();
-  const [, , input, , send, , , , , , , context, search, results] = view.contentEl.children;
+  const [, , input, , send, , , , , , , context, , , search, results] = view.contentEl.children;
   input.value = "this phrase";
   await search.onclick();
   assert.match(results.children[0].text, /note\.md/);
@@ -477,4 +477,46 @@ test("text search button opens a result and context selection reaches chat", asy
   respond = () => response({ message: { content: "answer" } });
   await send.onclick();
   assert.match(JSON.parse(requests[0].body).messages[1].content, /find this phrase/);
+});
+
+test("incremental index re-embeds only files whose stat changed and drops removed paths", async () => {
+  const embedded = [], deleted = [];
+  let files = [{ path: "a.md", stat: { mtime: 1, size: 5 } }, { path: "b.md", stat: { mtime: 1, size: 5 } }];
+  const vault = { getMarkdownFiles: () => files, cachedRead: async f => "text " + f.path };
+  const models = { embed: async texts => { embedded.push(...texts); return texts.map(() => [1]); } };
+  let listed = 0;
+  const store = { list: async () => { listed++; return [{ id: "gone.md:0", path: "gone.md" }]; }, upsert: async () => {}, delete: async ids => deleted.push(...ids), search: async () => [] };
+  const kb = new KnowledgeBase(vault, models, store);
+  const state = { files: { "gone.md": [1, 1] } };
+  await kb.index({ state });
+  assert.equal(kb.changed, 2);
+  assert.deepEqual(state.files, { "a.md": [1, 5], "b.md": [1, 5] });
+  assert.deepEqual(deleted, ["gone.md:0"]);
+  embedded.length = 0; listed = 0;
+  await kb.index({ state });
+  assert.equal(kb.changed, 0);
+  assert.equal(listed, 0);
+  files = [{ path: "a.md", stat: { mtime: 2, size: 5 } }, files[1]];
+  await kb.index({ state });
+  assert.deepEqual(embedded, ["text a.md"]);
+  embedded.length = 0;
+  await kb.index({ state, full: true });
+  assert.equal(embedded.length, 2);
+});
+
+test("skills load built-ins, plugin-folder and vault-folder skills", async () => {
+  const vault = {
+    getMarkdownFiles: () => [{ path: "LLM Skills/Haiku.md" }, { path: "other/x.md" }],
+    cachedRead: async () => "---\ncontext: none\ndescription: Write a haiku\n---\nWrite a haiku.",
+    adapter: {
+      exists: async () => true,
+      list: async () => ({ files: ["skills/Translate.md", "skills/readme.txt"] }),
+      read: async () => "Translate to French."
+    }
+  };
+  const skills = await loadSkills(vault, "skills");
+  const custom = skills.filter(s => s.custom);
+  assert.deepEqual(custom.map(s => [s.id, s.context]), [["plugin:skills/Translate.md", "active"], ["vault:LLM Skills/Haiku.md", "none"]]);
+  assert.equal(custom[1].description, "Write a haiku");
+  assert.ok(skills.length >= 5);
 });

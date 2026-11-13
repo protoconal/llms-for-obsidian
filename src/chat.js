@@ -66,6 +66,14 @@ class ChatView extends ItemView {
     }
     context.value = this.contextMode;
     context.onchange = () => { this.contextMode = context.value; };
+    root.createEl("p", { text: "Skill" });
+    const skillSelect = root.createEl("select", { attr: { "aria-label": "Skill" } });
+    skillSelect.createEl("option", { text: "No skill", attr: { value: "" } });
+    let skills = [];
+    this.plugin.skills().then(list => {
+      skills = list;
+      for (const skill of list) skillSelect.createEl("option", { text: skill.name, attr: { value: skill.id, title: skill.description } });
+    }).catch(error => new Notice(`Could not load skills: ${error.message}`));
     const search = root.createEl("button", { text: "Search vault text" });
     const searchResults = root.createDiv();
     const archives = new ChatArchives(this.plugin.app.vault);
@@ -78,6 +86,7 @@ class ChatView extends ItemView {
       restore.disabled = busy;
       saveCopy.disabled = busy;
       context.disabled = busy;
+      skillSelect.disabled = busy;
       search.disabled = busy;
     };
     const saveArchive = async () => {
@@ -174,7 +183,7 @@ class ChatView extends ItemView {
       transcript.createEl("p", { text: `You: ${question}` });
       try {
         if (this.history.length >= 10) await compactHistory();
-        const answer = await this.plugin.answer(question, this.history, this.summary, this.contextMode);
+        const answer = await this.plugin.answer(question, this.history, this.summary, this.contextMode, skills.find(s => s.id === skillSelect.value) || null);
         this.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
         this.messages.push({ role: "user", content: question }, { role: "assistant", content: answer });
         this.dirty = true;
