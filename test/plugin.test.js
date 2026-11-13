@@ -230,6 +230,41 @@ test("automatic compaction keeps original conversation and input when summarizat
   assert.equal(send.disabled, false);
 });
 
+test("chat automatically compacts and sends the summary on the next question", async () => {
+  class Element {
+    constructor() { this.children = []; this.value = ""; }
+    empty() { this.children = []; }
+    setText(text) { this.text = text; }
+    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
+    createDiv() { return this.createEl("div"); }
+  }
+  const plugin = new LLMPlugin();
+  let factory;
+  plugin.loadData = async () => ({ useRetrieval: false });
+  plugin.registerView = (_, create) => { factory = create; };
+  plugin.addSettingTab = () => {};
+  plugin.addRibbonIcon = () => {};
+  plugin.addCommand = () => {};
+  plugin.app = {};
+  await plugin.onload();
+  const view = factory({});
+  view.contentEl = new Element();
+  await view.onOpen();
+  view.history = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: String(i) }));
+  requests = [];
+  respond = () => response({ message: { content: requests.length === 1 ? "summary" : "answer" } });
+  const [, , input, , send, , clear] = view.contentEl.children;
+  input.value = "next";
+  await send.onclick();
+  assert.equal(requests.length, 2);
+  assert.match(JSON.parse(requests[1].body).messages[1].content, /summary/);
+  assert.equal(view.history.length, 6);
+  assert.equal(view.summary, "summary");
+  clear.onclick();
+  assert.equal(view.summary, "");
+  assert.deepEqual(view.history, []);
+});
+
 test("answer includes compacted summary alongside recent history", async () => {
   const plugin = new LLMPlugin();
   plugin.settings = { ...DEFAULTS, useRetrieval: false };
