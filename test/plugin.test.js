@@ -155,21 +155,7 @@ test("chat sends retrieved context and wiki never overwrites an existing page", 
   assert.deepEqual(created, { path: "note - Wiki 1.md", text: "generated" });
 });
 
-test("plugin bootstraps commands and panel can send and clear a message", async () => {
-  class Element {
-    constructor() { this.children = []; this.value = ""; }
-    empty() { this.children = []; }
-    addClass() {}
-    setText(text) { this.text = text; }
-    createEl(tag, options = {}) {
-      const child = new Element();
-      child.tag = tag;
-      child.text = options.text;
-      this.children.push(child);
-      return child;
-    }
-    createDiv() { return this.createEl("div"); }
-  }
+test("plugin bootstraps commands and chat session can send and clear a message", async () => {
   const plugin = new LLMPlugin();
   const commands = [];
   let factory;
@@ -181,22 +167,14 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   plugin.app = { vault: mockVault() };
   await plugin.onload();
   assert.deepEqual(commands, ["open-chat", "index-vault", "full-reindex-vault", "run-skill", "generate-wiki"]);
-  const view = factory({});
-  view.contentEl = new Element();
+  const view = factory({}).session;
   respond = () => response({ message: { content: "hello" } });
   requests = [];
-  await view.onOpen();
-  const [, transcript, input, advice, send, , , row] = view.contentEl.children;
-  const clear = row.children[1];
-  input.value = "debug my code";
-  input.oninput();
-  assert.match(advice.text, /Code-oriented/);
-  input.value = "hi";
-  await send.onclick();
-  assert.deepEqual(transcript.children.map(c => c.text), ["hi", "hello"]);
+  assert.equal(await view.send("hi"), true);
+  assert.deepEqual(view.transcript.map(m => m.content), ["hi", "hello"]);
   assert.equal(requests.length, 1);
-  clear.onclick();
-  assert.deepEqual(transcript.children, []);
+  view.clear();
+  assert.deepEqual(view.transcript, []);
   assert.deepEqual(view.history, []);
 });
 
@@ -221,14 +199,6 @@ test("compaction summarizes older turns and preserves recent turns and prior sum
 });
 
 test("automatic compaction keeps original conversation and input when summarization fails", async () => {
-  class Element {
-    constructor() { this.children = []; this.value = ""; }
-    empty() { this.children = []; }
-    addClass() {}
-    setText(text) { this.text = text; }
-    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
-    createDiv() { return this.createEl("div"); }
-  }
   const plugin = new LLMPlugin();
   let factory;
   plugin.loadData = async () => ({ useRetrieval: false });
@@ -238,31 +208,18 @@ test("automatic compaction keeps original conversation and input when summarizat
   plugin.addCommand = () => {};
   plugin.app = { vault: mockVault() };
   await plugin.onload();
-  const view = factory({});
-  view.contentEl = new Element();
-  await view.onOpen();
+  const view = factory({}).session;
   view.history = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: String(i) }));
   view.summary = "previous";
   respond = () => ({ status: 503, json: {} });
-  const [, transcript, input, , send] = view.contentEl.children;
-  input.value = "next question";
-  await send.onclick();
+  assert.equal(await view.send("next question"), false);
   assert.equal(view.history.length, 10);
   assert.equal(view.summary, "previous");
-  assert.equal(input.value, "next question");
-  assert.match(transcript.children.at(-1).text, /503/);
-  assert.equal(send.disabled, false);
+  assert.match(view.transcript.at(-1).content, /503/);
+  assert.equal(view.busy, false);
 });
 
 test("chat automatically compacts and sends the summary on the next question", async () => {
-  class Element {
-    constructor() { this.children = []; this.value = ""; }
-    empty() { this.children = []; }
-    addClass() {}
-    setText(text) { this.text = text; }
-    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
-    createDiv() { return this.createEl("div"); }
-  }
   const plugin = new LLMPlugin();
   let factory;
   plugin.loadData = async () => ({ useRetrieval: false });
@@ -272,21 +229,16 @@ test("chat automatically compacts and sends the summary on the next question", a
   plugin.addCommand = () => {};
   plugin.app = { vault: mockVault() };
   await plugin.onload();
-  const view = factory({});
-  view.contentEl = new Element();
-  await view.onOpen();
+  const view = factory({}).session;
   view.history = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: String(i) }));
   requests = [];
   respond = () => response({ message: { content: requests.length === 1 ? "summary" : "answer" } });
-  const [, , input, , send, , , row] = view.contentEl.children;
-  const clear = row.children[1];
-  input.value = "next";
-  await send.onclick();
+  await view.send("next");
   assert.equal(requests.length, 2);
   assert.match(JSON.parse(requests[1].body).messages[1].content, /summary/);
   assert.equal(view.history.length, 6);
   assert.equal(view.summary, "summary");
-  clear.onclick();
+  view.clear();
   assert.equal(view.summary, "");
   assert.deepEqual(view.history, []);
 });
@@ -304,14 +256,6 @@ test("answer includes compacted summary alongside recent history", async () => {
 });
 
 test("archive persists the full transcript and compacted context and restores it", async () => {
-  class Element {
-    constructor() { this.children = []; this.value = ""; }
-    empty() { this.children = []; }
-    addClass() {}
-    setText(text) { this.text = text; }
-    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
-    createDiv() { return this.createEl("div"); }
-  }
   const plugin = new LLMPlugin();
   let factory;
   plugin.loadData = async () => ({ useRetrieval: false });
@@ -321,15 +265,10 @@ test("archive persists the full transcript and compacted context and restores it
   plugin.addCommand = () => {};
   plugin.app = { vault: mockVault() };
   await plugin.onload();
-  const view = factory({});
-  view.contentEl = new Element();
-  await view.onOpen();
-  const [, transcript, input, , send, , , row] = view.contentEl.children;
-  const [, clear, , , restore] = row.children;
+  const view = factory({}).session;
   respond = () => response({ message: { content: "reply" } });
   for (let i = 0; i < 6; i++) {
-    input.value = `question ${i}`;
-    await send.onclick();
+    await view.send(`question ${i}`);
   }
   const files = plugin.app.vault.getFiles();
   assert.equal(files.length, 1);
@@ -337,28 +276,19 @@ test("archive persists the full transcript and compacted context and restores it
   assert.equal(saved.messages.length, 12);
   assert.equal(saved.history.length, 6);
   assert.equal(saved.summary, "reply");
-  clear.onclick();
+  view.clear();
   assert.equal(view.messages.length, 0);
-  restore.onclick();
+  view.restore();
   await FuzzySuggestModal.current.onChooseItem(files[0]);
   assert.deepEqual(view.messages, saved.messages);
   assert.deepEqual(view.history, saved.history);
   assert.equal(view.summary, saved.summary);
-  assert.equal(transcript.children.length, 12);
-  input.value = "continued";
-  await send.onclick();
+  assert.equal(view.transcript.length, 12);
+  await view.send("continued");
   assert.equal(JSON.parse(files[0].content).messages.length, 14);
 });
 
 test("archive save conflict preserves unsaved chat and blocks clear", async () => {
-  class Element {
-    constructor() { this.children = []; this.value = ""; }
-    empty() { this.children = []; }
-    addClass() {}
-    setText() {}
-    createEl() { const child = new Element(); this.children.push(child); return child; }
-    createDiv() { return this.createEl(); }
-  }
   const plugin = new LLMPlugin();
   let factory;
   plugin.loadData = async () => ({ useRetrieval: false });
@@ -368,26 +298,20 @@ test("archive save conflict preserves unsaved chat and blocks clear", async () =
   plugin.addCommand = () => {};
   plugin.app = { vault: mockVault() };
   await plugin.onload();
-  const view = factory({});
-  view.contentEl = new Element();
-  await view.onOpen();
+  const view = factory({}).session;
   respond = () => response({ message: { content: "reply" } });
-  const [, , input, , send, , , row] = view.contentEl.children;
-  const [, clear, , saveCopy] = row.children;
-  input.value = "first";
-  await send.onclick();
+  await view.send("first");
   const file = plugin.app.vault.getFiles()[0];
   file.content = "edited elsewhere";
-  input.value = "second";
-  await send.onclick();
+  await view.send("second");
   assert.equal(file.content, "edited elsewhere");
   assert.equal(view.dirty, true);
-  clear.onclick();
+  view.clear();
   assert.equal(view.messages.length, 4);
-  await saveCopy.onclick();
+  await view.saveCopy();
   assert.equal(plugin.app.vault.getFiles().length, 2);
   assert.equal(view.dirty, false);
-  clear.onclick();
+  view.clear();
   assert.equal(view.messages.length, 0);
 });
 
@@ -451,14 +375,6 @@ test("chat context mode can send the full active note or no vault context", asyn
 });
 
 test("text search button opens a result and context selection reaches chat", async () => {
-  class Element {
-    constructor() { this.children = []; this.value = ""; }
-    empty() { this.children = []; }
-    addClass() {}
-    setText() {}
-    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
-    createDiv() { return this.createEl(); }
-  }
   const plugin = new LLMPlugin();
   let factory, opened;
   const vault = mockVault();
@@ -472,22 +388,15 @@ test("text search button opens a result and context selection reaches chat", asy
   plugin.addCommand = () => {};
   plugin.app = { vault, workspace: { getActiveFile: () => note, getLeaf: () => ({ openFile: async file => { opened = file; } }) } };
   await plugin.onload();
-  const view = factory({});
-  view.contentEl = new Element();
-  await view.onOpen();
-  const [, , input, , send, contextField, , row, results] = view.contentEl.children;
-  const context = contextField.children[1];
-  const search = row.children[5];
-  input.value = "this phrase";
-  await search.onclick();
-  assert.match(results.children[0].text, /note\.md/);
-  await results.children[0].onclick();
+  const view = factory({}).session;
+  await view.search("this phrase");
+  assert.match(view.results.items[0].path, /note\.md/);
+  await view.openResult(view.results.items[0].file);
   assert.equal(opened, note);
-  context.value = "active";
-  context.onchange();
+  view.setContext("active");
   requests = [];
   respond = () => response({ message: { content: "answer" } });
-  await send.onclick();
+  await view.send("question");
   assert.match(JSON.parse(requests[0].body).messages[1].content, /find this phrase/);
 });
 

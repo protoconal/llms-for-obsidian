@@ -7,6 +7,7 @@ const { loadSkills, skillSystemPrompt, SkillPicker } = require("./skills");
 const { endpoint, ModelClient } = require("./models");
 const { ChromaStore } = require("./chromastore");
 const { SQLiteStore } = require("./sqlitestore");
+const { sqliteManager } = require("./sqliteserver");
 const { LocalStore } = require("./localstore");
 const { LLMSettings, DEFAULTS } = require("./settings");
 
@@ -36,6 +37,9 @@ module.exports = class LLMPlugin extends Plugin {
       if (this.app.workspace.onLayoutReady) this.app.workspace.onLayoutReady(() => this.registerInterval(setTimeout(() => this.tick(), 30000)));
     }
   }
+  onunload() { sqliteManager.stopAll(); }
+  sqliteServers() { return sqliteManager.list(); }
+  stopSqliteServers() { return sqliteManager.stopAll(); }
   indexStatePath() { return `${this.app.vault.configDir}/plugins/${this.manifest.id}/index-state.json`; }
   async loadIndexState() {
     if (this.indexState) return this.indexState;
@@ -179,4 +183,4 @@ module.exports = class LLMPlugin extends Plugin {
   }
 };
 
-module.exports.test = { DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, LocalStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes, parseArchive, loadSkills };
+module.exports.test = { sqliteManager, DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, LocalStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes, parseArchive, loadSkills };

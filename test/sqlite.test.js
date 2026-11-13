@@ -103,3 +103,29 @@ test("SQLite reports recorded embedding metadata and resets a collection despite
   assert.equal((await changed.stats()).embedding, null);
   await changed.upsert([{ id: "a:0", path: "a.md", text: "x" }], [[1, 0, 0]]);
 });
+
+test("SQLite runs as one background process that the manager tracks and can kill", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "obsidian-sqlite-"));
+  t.after(() => { Plugin.test.sqliteManager.stopAll(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const db = path.join(dir, "vectors.sqlite3");
+  const manager = Plugin.test.sqliteManager;
+  manager.stopAll();
+  assert.deepEqual(manager.list(), []);
+  const store = new SQLiteStore(DEFAULTS, db);
+  await store.upsert([{ id: "a:0", path: "a.md", text: "x" }], [[1, 0]]);
+  await store.list();
+  const [info] = manager.list();
+  assert.equal(info.databasePath, db);
+  assert.ok(info.pid > 0);
+  assert.ok(info.requests >= 2);
+  assert.equal(manager.list().length, 1);
+  assert.equal(manager.stopAll(), 1);
+  assert.deepEqual(manager.list(), []);
+  const alive = () => { try { process.kill(info.pid, 0); return true; } catch (_) { return false; } };
+  for (let i = 0; i < 50 && alive(); i++) await new Promise(r => setTimeout(r, 20));
+  assert.equal(alive(), false, "process should be gone");
+  assert.equal((await store.list()).length, 1, "restarts on demand");
+  assert.equal(manager.list().length, 1);
+  await assert.rejects(store.search([1, 0, 0]), /Collection uses/);
+  assert.equal((await store.list()).length, 1, "recovers after a failed statement");
+});

@@ -111,10 +111,24 @@ class LLMSettings extends PluginSettingTab {
       this.text(el, "ChromaDB tenant", "Existing tenant name.", "chromaTenant");
       this.text(el, "ChromaDB database", "Existing database name.", "chromaDatabase");
     } else if (plugin.settings.vectorStore === "sqlite") {
-      el.createDiv({ cls: "llms-notice", text: "SQLite requires desktop, a separately installed SQLite CLI and the sqlite-vec extension. See the README." });
+      el.createDiv({ cls: "llms-notice", text: "SQLite requires desktop, a separately installed SQLite CLI and the sqlite-vec extension. See the README. The plugin runs one background sqlite3 process per database, started on first use." });
     }
+    if (plugin.settings.vectorStore === "sqlite" || plugin.sqliteServers().length) this.sqliteServerSetting(el);
     this.panel = el.createDiv();
     this.component = mount(StoragePanel, { target: this.panel, props: { load: () => plugin.storageStats(), reset: () => plugin.resetCollection() } });
+  }
+  sqliteServerSetting(el) {
+    const { plugin } = this;
+    const setting = new Setting(el).setName("SQLite background server");
+    const describe = () => {
+      const servers = plugin.sqliteServers();
+      setting.setDesc(servers.length
+        ? servers.map(s => `Running (pid ${s.pid}, ${s.requests} requests since ${new Date(s.startedAt).toLocaleTimeString()}): ${s.databasePath}`).join("\n") + "\nIt restarts automatically on the next index or search."
+        : "Not running. It starts automatically on the next index, search or stats request.");
+    };
+    describe();
+    setting.addButton(b => b.setButtonText("Refresh").onClick(describe));
+    setting.addButton(b => b.setButtonText("Kill server").setWarning().onClick(() => { plugin.stopSqliteServers(); describe(); }));
   }
   indexingTab(el) {
     new Setting(el).setName("Schedule").setHeading();
