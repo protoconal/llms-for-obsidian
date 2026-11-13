@@ -66,7 +66,7 @@ jobs:
             const v = require('sqlite-vec');
             const p = v.getLoadablePath();
             if (!require('fs').existsSync(p)) throw new Error('missing ' + p);
-            if (require('sqlite-vec/package.json').version !== process.env.SQLITE_VEC_VERSION) throw new Error('version mismatch');
+            if (require('./node_modules/sqlite-vec/package.json').version !== process.env.SQLITE_VEC_VERSION) throw new Error('version mismatch');
             console.log(p);
           "
       - name: Package
