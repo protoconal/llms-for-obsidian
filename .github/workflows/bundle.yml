@@ -1,0 +1,100 @@
+name: bundle
+# Builds per-platform plugin bundles containing main.js plus the pinned sqlite-vec
+# extension (installed from package-lock.json, integrity-checked by npm).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  SQLITE_VEC_VERSION: 0.1.9
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Verify sqlite-vec pin
+        run: |
+          test "$(node -p "require('./package.json').dependencies['sqlite-vec']")" = "$SQLITE_VEC_VERSION"
+          test "$(node -p "require('./package-lock.json').packages['node_modules/sqlite-vec'].version")" = "$SQLITE_VEC_VERSION"
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-js
+          path: |
+            main.js
+            manifest.json
+  bundle:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-latest }
+          - { name: linux-arm64, os: ubuntu-24.04-arm }
+          - { name: darwin-x64, os: macos-15-intel }
+          - { name: darwin-arm64, os: macos-latest }
+          - { name: windows-x64, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v4
+        with:
+          name: main-js
+          path: dist
+      - name: Install pinned production dependencies
+        run: |
+          cp package.json package-lock.json dist/
+          cd dist
+          npm ci --omit=dev --ignore-scripts
+      - name: Verify extension binary and version
+        working-directory: dist
+        run: |
+          node -e "
+            const v = require('sqlite-vec');
+            const p = v.getLoadablePath();
+            if (!require('fs').existsSync(p)) throw new Error('missing ' + p);
+            if (require('sqlite-vec/package.json').version !== process.env.SQLITE_VEC_VERSION) throw new Error('version mismatch');
+            console.log(p);
+          "
+      - name: Package
+        run: |
+          mkdir -p out/llms-for-obsidian
+          cp -R dist/. out/llms-for-obsidian/
+          cd out
+          node -e "
+            const {execFileSync} = require('child_process');
+            if (process.platform === 'win32') execFileSync('powershell', ['-Command', 'Compress-Archive -Path llms-for-obsidian -DestinationPath ../llms-for-obsidian-${{ matrix.name }}.zip']);
+            else execFileSync('zip', ['-qr', '../llms-for-obsidian-${{ matrix.name }}.zip', 'llms-for-obsidian']);
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llms-for-obsidian-${{ matrix.name }}
+          path: llms-for-obsidian-${{ matrix.name }}.zip
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: llms-for-obsidian-*
+          merge-multiple: true
+          path: release
+      - run: gh release create "$GITHUB_REF_NAME" release/*.zip --repo "$GITHUB_REPOSITORY" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

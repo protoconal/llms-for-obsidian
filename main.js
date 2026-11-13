@@ -7227,7 +7227,12 @@ function endpoint(base, path) {
 }
 async function jsonRequest(url, method = "GET", body, key2 = "") {
   const headers = { "Content-Type": "application/json" };
-  if (key2) headers.Authorization = "Bearer " + key2;
+  if (key2) {
+    const { protocol, hostname } = new URL(url);
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+    if (protocol !== "https:" && !loopback) throw new Error("Refusing to send an API key over plain HTTP to a non-local host. Use HTTPS.");
+    headers.Authorization = "Bearer " + key2;
+  }
   const response = await requestUrl({
     url,
     method,
