@@ -1,7 +1,7 @@
 const { Plugin, PluginSettingTab, Setting, ItemView, Notice, requestUrl, Platform } = require("obsidian");
 const { KnowledgeBase, chunkNote } = require("./knowledge");
 const { ChatView, recommendModel, compactConversation } = require("./chat");
-const { isArchivePath } = require("./archive");
+const { isArchivePath, parseArchive } = require("./archive");
 const { searchNotes } = require("./search");
 
 const VIEW_TYPE = "llms-chat";
@@ -359,4 +359,4 @@ module.exports = class LLMPlugin extends Plugin {
   }
 };
 
-module.exports.test = { DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes };
+module.exports.test = { DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes, parseArchive };

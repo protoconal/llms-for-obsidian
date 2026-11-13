@@ -1,3 +1,5 @@
+const { isArchivePath } = require("./archive");
+
 function chunkNote(path, text) {
   const chunks = [];
   for (let start = 0; start < text.length; start += 1500) {
@@ -36,4 +38,3 @@ class KnowledgeBase {
 }
 
 module.exports = { KnowledgeBase, chunkNote };
-const { isArchivePath } = require("./archive");

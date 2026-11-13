@@ -15,7 +15,7 @@ var require_archive = __commonJS({
     function isArchivePath2(path) {
       return typeof path === "string" && (path === ARCHIVE_FOLDER || path.startsWith(ARCHIVE_FOLDER + "/"));
     }
-    function parseArchive(content) {
+    function parseArchive2(content) {
       const data = JSON.parse(content);
       const validMessages = (messages) => Array.isArray(messages) && messages.every((message) => message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string");
       if (!data || data.version !== 1 || typeof data.summary !== "string" || !validMessages(data.history) || !validMessages(data.messages)) {
@@ -33,7 +33,7 @@ var require_archive = __commonJS({
       async load(file) {
         if (!file || !isArchivePath2(file.path) || file.extension !== "json") throw new Error("Not a chat archive.");
         const content = await this.vault.read(file);
-        return { ...parseArchive(content), file, content };
+        return { ...parseArchive2(content), file, content };
       }
       async save(state, previous) {
         const content = JSON.stringify({ version: 1, summary: state.summary, history: state.history, messages: state.messages }, null, 2) + "\n";
@@ -72,13 +72,14 @@ var require_archive = __commonJS({
         return this.onChoose(file);
       }
     };
-    module2.exports = { ARCHIVE_FOLDER, isArchivePath: isArchivePath2, parseArchive, ChatArchives, ArchivePicker };
+    module2.exports = { ARCHIVE_FOLDER, isArchivePath: isArchivePath2, parseArchive: parseArchive2, ChatArchives, ArchivePicker };
   }
 });
 
 // src/knowledge.js
 var require_knowledge = __commonJS({
   "src/knowledge.js"(exports2, module2) {
+    var { isArchivePath: isArchivePath2 } = require_archive();
     function chunkNote2(path, text) {
       const chunks = [];
       for (let start = 0; start < text.length; start += 1500) {
@@ -115,7 +116,6 @@ var require_knowledge = __commonJS({
       }
     };
     module2.exports = { KnowledgeBase: KnowledgeBase2, chunkNote: chunkNote2 };
-    var { isArchivePath: isArchivePath2 } = require_archive();
   }
 });
 
@@ -395,7 +395,7 @@ var require_chat = __commonJS({
 var { Plugin, PluginSettingTab, Setting, ItemView, Notice, requestUrl, Platform } = require("obsidian");
 var { KnowledgeBase, chunkNote } = require_knowledge();
 var { ChatView, recommendModel, compactConversation } = require_chat();
-var { isArchivePath } = require_archive();
+var { isArchivePath, parseArchive } = require_archive();
 var { searchNotes } = require_search();
 var VIEW_TYPE = "llms-chat";
 var DEFAULTS = {
@@ -804,4 +804,4 @@ ${contextMessage(results)}` }
     }
   }
 };
-module.exports.test = { DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes };
+module.exports.test = { DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes, parseArchive };
