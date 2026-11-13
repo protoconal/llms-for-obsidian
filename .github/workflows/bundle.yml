@@ -36,11 +36,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x64, os: ubuntu-latest }
+          - { name: linux-x64, os: ubuntu-latest, sqlite: linux-x64, sha: 555635de98534d87a67ee2e6e1b0d79f494b1b33b223477d3e7a8ea0c66e416f }
           - { name: linux-arm64, os: ubuntu-24.04-arm }
-          - { name: darwin-x64, os: macos-15-intel }
-          - { name: darwin-arm64, os: macos-latest }
-          - { name: windows-x64, os: windows-latest }
+          - { name: darwin-x64, os: macos-15-intel, sqlite: osx-x64, sha: 6a65ac5bff00b0b5251239462dffc70e704bcf1a49e603d5af9fb2812556d113 }
+          - { name: darwin-arm64, os: macos-latest, sqlite: osx-arm64, sha: a3106c6db3b50ec9ef4fde4edfafe7504179e9bfd7e0816a280b29c4d56a2e7b }
+          - { name: windows-x64, os: windows-latest, sqlite: win-x64, sha: e171f3993a992edf076746926dd52b5e2ebfabaee38818e74987e1d8112ab987 }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -69,6 +69,25 @@ jobs:
             if (require('./node_modules/sqlite-vec/package.json').version !== process.env.SQLITE_VEC_VERSION) throw new Error('version mismatch');
             console.log(p);
           "
+      - name: Bundle sqlite3 CLI
+        if: matrix.sqlite
+        working-directory: dist
+        run: |
+          curl -fsSL -o tools.zip "https://www.sqlite.org/2026/sqlite-tools-${{ matrix.sqlite }}-3540100.zip"
+          node -e "
+            const h = require('crypto').createHash('sha3-256').update(require('fs').readFileSync('tools.zip')).digest('hex');
+            if (h !== '${{ matrix.sha }}') throw new Error('sqlite-tools hash mismatch: ' + h);
+          "
+          mkdir -p bin
+          node -e "
+            const {execFileSync} = require('child_process');
+            execFileSync(process.platform === 'win32' ? 'powershell' : 'unzip', process.platform === 'win32'
+              ? ['-Command', 'Expand-Archive tools.zip -DestinationPath tools'] : ['-q', 'tools.zip', '-d', 'tools']);
+          "
+          cp tools/sqlite3* bin/
+          chmod +x bin/sqlite3* || true
+          rm -rf tools tools.zip
+          ls bin
       - name: Package
         run: |
           mkdir -p out/llms-for-obsidian
