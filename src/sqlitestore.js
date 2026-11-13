@@ -1,3 +1,5 @@
+const { sqliteManager } = require("./sqliteserver");
+
 function sqlText(value) {
   return "CAST(X'" + Buffer.from(value, "utf8").toString("hex") + "' AS TEXT)";
 }
@@ -26,42 +28,29 @@ class SQLiteStore {
     return fs.existsSync(bundled) ? bundled : "sqlite3";
   }
   async execute(sql, guard = true) {
-    const { spawn } = require("node:child_process");
     let extension;
     try { extension = require("sqlite-vec").getLoadablePath(); }
     catch (error) { throw new Error(`sqlite-vec extension unavailable: ${error.message}. See setup instructions.`); }
     if (/[\r\n]/.test(extension)) throw new Error("Invalid sqlite-vec installation path.");
-    const quoted = extension.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     const schema = `
       CREATE TABLE IF NOT EXISTS collections (name TEXT PRIMARY KEY, signature TEXT NOT NULL, dimensions INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS chunks (collection TEXT NOT NULL, id TEXT NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL, embedding TEXT NOT NULL, PRIMARY KEY(collection, id));
     ` + (guard ? `
+      DROP TABLE IF EXISTS temp.collection_guard;
       CREATE TEMP TABLE collection_guard (ok INTEGER CHECK(ok=1));
       INSERT INTO collection_guard SELECT CASE WHEN signature=${this.signature} THEN 1 ELSE 0 END FROM collections WHERE name=${this.collection};
     ` : "");
-    return new Promise((resolve, reject) => {
-      const child = spawn(this.cliPath(), ["-batch", "-bail", "-json", "-cmd", ".timeout 5000", "-cmd", `.load "${quoted}"`, this.databasePath], { windowsHide: true });
-      let output = "", errors = "", failed = false;
-      const fail = error => { if (!failed) { failed = true; reject(error); } };
-      child.on("error", error => fail(new Error(`Unable to start SQLite CLI: ${error.message}. See setup instructions.`)));
-      child.stdin.on("error", error => { if (error.code !== "EPIPE") fail(error); });
-      child.stdout.on("data", data => {
-        output += data;
-        if (output.length > 64 * 1024 * 1024) { child.kill(); fail(new Error("SQLite output exceeds 64 MiB.")); }
-      });
-      child.stderr.on("data", data => { if (errors.length < 8192) errors += data.toString().slice(0, 8192 - errors.length); });
-      child.on("close", code => {
-        if (failed) return;
-        if (code !== 0) {
-          const message = errors.includes("CHECK constraint failed: ok=1") ? "Collection uses a different embedding provider, URL, model or vector dimension; choose a new collection." : errors.trim();
-          fail(new Error(`SQLite operation failed: ${message || `exit ${code}`}`));
-          return;
-        }
-        try { resolve(output.trim() ? JSON.parse(output) : []); }
-        catch (_) { fail(new Error("SQLite returned invalid JSON.")); }
-      });
-      child.stdin.end(schema + sql);
-    });
+    const server = sqliteManager.acquire({ cli: this.cliPath(), extension, databasePath: this.databasePath });
+    let output;
+    try { output = await server.run(schema + sql); }
+    catch (error) {
+      const text = error.stderr || "";
+      const message = text.includes("CHECK constraint failed: ok=1") ? "Collection uses a different embedding provider, URL, model or vector dimension; choose a new collection." : text;
+      if (/^Unable to start|^SQLite output exceeds|^SQLite server was stopped/.test(error.message)) throw error;
+      throw new Error(`SQLite operation failed: ${message || error.message}`);
+    }
+    try { return output.trim() ? JSON.parse(output) : []; }
+    catch (_) { throw new Error("SQLite returned invalid JSON."); }
   }
   async list() {
     return this.execute(`SELECT id, path FROM chunks WHERE collection=${this.collection};`);
