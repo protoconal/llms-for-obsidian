@@ -1,0 +1,11 @@
+{
+  "name": "llms-for-obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first chat, retrieval and wiki generation for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "Apache-2.0"
+}
