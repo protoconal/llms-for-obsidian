@@ -22,7 +22,9 @@ function endpoint(base, path) {
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new Error("Endpoint must be an HTTP(S) URL without credentials, query, or fragment.");
   }
-  return base.replace(/\/+$/, "") + path;
+  let end = base.length;
+  while (end > 0 && base[end - 1] === "/") end--;
+  return base.slice(0, end) + path;
 }
 
 async function jsonRequest(url, method = "GET", body, key = "") {
