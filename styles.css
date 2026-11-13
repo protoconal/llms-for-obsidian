@@ -1,0 +1,68 @@
+/* Settings */
+.llms-settings .llms-notice {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.llms-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.llms-tab {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 14px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.llms-tab:hover { color: var(--text-normal); }
+.llms-tab.is-active {
+  color: var(--text-accent);
+  border-bottom-color: var(--interactive-accent);
+  font-weight: var(--font-semibold);
+}
+.llms-storage {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--background-secondary);
+  border-radius: 8px;
+}
+.llms-storage h3 { margin-top: 0; }
+.llms-storage table { width: 100%; margin: 8px 0; border-collapse: collapse; }
+.llms-storage th { text-align: left; color: var(--text-muted); font-weight: normal; padding: 4px 0; }
+.llms-storage td { text-align: right; padding: 4px 0; }
+.llms-storage tr + tr { border-top: 1px solid var(--background-modifier-border); }
+.llms-storage-error { color: var(--text-error); }
+
+/* Chat panel */
+.llms-chat { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.llms-chat h4 { margin: 0; }
+.llms-transcript { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
+.llms-msg {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  max-width: 92%;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.llms-msg-user { align-self: flex-end; background: var(--interactive-accent); color: var(--text-on-accent); }
+.llms-msg-assistant { align-self: flex-start; background: var(--background-secondary); }
+.llms-msg-error { align-self: flex-start; background: var(--background-modifier-error); color: var(--text-on-accent); }
+.llms-chat textarea { width: 100%; resize: vertical; }
+.llms-advice { margin: 0; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.llms-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.llms-row > button { flex: 1 1 auto; }
+.llms-field { display: flex; flex-direction: column; gap: 2px; }
+.llms-field label { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.llms-results { display: flex; flex-direction: column; gap: 4px; }
+.llms-results button { text-align: left; white-space: normal; height: auto; padding: 6px 8px; }

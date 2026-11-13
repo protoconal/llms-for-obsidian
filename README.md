@@ -1,6 +1,6 @@
 # LLMs for Obsidian
 
-A local-first Obsidian plugin for chat, retrieval-augmented search, and generating wiki pages from notes. It does not download or run models inside Obsidian. Vector storage can use a separate ChromaDB service or a local SQLite database on desktop.
+A local-first Obsidian plugin for chat, retrieval-augmented search, and generating wiki pages from notes. It does not download or run models inside Obsidian. Vector storage works out of the box with a built-in local index (no install, desktop and mobile); ChromaDB and SQLite are optional advanced backends.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ For future efficient hourly indexing, Obsidian already exposes [`TFile.stat`](ht
 
 1. Install and start [Ollama](https://ollama.com/) and pull a chat model and an embedding model, for example `ollama pull llama3.2` and `ollama pull nomic-embed-text`.
 2. Copy `manifest.json` and `main.js` into `<vault>/.obsidian/plugins/llms-for-obsidian/`, then enable **LLMs for Obsidian** in Obsidian's Community plugins settings.
-3. Choose a vector store in plugin settings. For the default ChromaDB, start a [ChromaDB](https://docs.trychroma.com/) v2 server, for example `chroma run --host 127.0.0.1 --port 8000`. The default tenant and database must exist. For SQLite, follow the desktop setup below.
+3. The default **Built-in** vector store needs no setup: it keeps an exact cosine index in `vectors.json` in the plugin folder. Optionally choose another store under Settings → Storage. For ChromaDB, start a [ChromaDB](https://docs.trychroma.com/) v2 server, for example `chroma run --host 127.0.0.1 --port 8000`. The default tenant and database must exist. For SQLite, follow the desktop setup below.
 4. Verify model names, endpoints and the collection name. Run **Index vault for retrieval** from the command palette. Switching stores does not migrate data; index again.
 5. Open **LLM Chat** from the ribbon or command palette. Use **Generate wiki page from active note** to create a wiki page next to the active note.
 
@@ -38,7 +38,9 @@ The chat panel automatically summarizes older turns before sending a message whe
 
 The panel provides local, keyword-based model-type guidance as you type: embedding, coding, reasoning, vision or general-purpose. This is a heuristic, not a model benchmark or an autonomous model selector. It does not inspect installed models, change settings, send the draft anywhere, or guarantee a best choice; the configured chat model is still used. Image input is not currently supported.
 
-## SQLite + sqlite-vec desktop setup
+## Optional: SQLite + sqlite-vec desktop setup
+
+Not needed for normal use; the built-in store requires no dependencies. Settings are grouped in tabs (Chat, Embeddings, Storage, Indexing).
 
 SQLite uses the SQLite command-line executable and the official [sqlite-vec 0.1.9](https://github.com/asg017/sqlite-vec/tree/v0.1.9) npm distribution, whose platform packages contain upstream precompiled extension binaries. The exact npm versions and integrity hashes are pinned in `package-lock.json`; sqlite-vec is pre-1.0, so upgrades require compatibility testing. npm validates downloaded packages against the lockfile. No arbitrary extension path or automatic runtime download is used.
 

@@ -48,34 +48,36 @@ class ChatView extends ItemView {
   async onOpen() {
     const root = this.contentEl;
     root.empty();
+    root.addClass("llms-chat");
     root.createEl("h4", { text: "LLM Chat" });
-    const transcript = root.createDiv();
+    const transcript = root.createDiv({ cls: "llms-transcript" });
+    const addMessage = (role, text) => transcript.createEl("p", { text, cls: `llms-msg llms-msg-${role}` });
     const input = root.createEl("textarea", { attr: { placeholder: "Ask about your vault", rows: "4", "aria-label": "Chat message" } });
-    const advice = root.createEl("p", { text: "Model guidance appears when you enter a task." });
+    const advice = root.createEl("p", { text: "Model guidance appears when you enter a task.", cls: "llms-advice" });
     input.oninput = () => { advice.setText(input.value.trim() ? recommendModel(input.value) : "Model guidance appears when you enter a task."); };
-    const send = root.createEl("button", { text: "Send" });
-    const compact = root.createEl("button", { text: "Compact conversation" });
-    const clear = root.createEl("button", { text: "Clear conversation" });
-    const save = root.createEl("button", { text: "Save archive" });
-    const restore = root.createEl("button", { text: "Restore archive" });
-    const saveCopy = root.createEl("button", { text: "Save new archive copy" });
-    root.createEl("p", { text: "Chat context" });
-    const context = root.createEl("select", { attr: { "aria-label": "Chat context" } });
+    const send = root.createEl("button", { text: "Send", cls: "mod-cta" });
+    const field = label => { const f = root.createDiv({ cls: "llms-field" }); f.createEl("label", { text: label }); return f; };
+    const context = field("Chat context").createEl("select", { attr: { "aria-label": "Chat context" } });
     for (const [value, label] of [["retrieval", "Vault embeddings"], ["active", "Full active note"], ["none", "No vault context"]]) {
       context.createEl("option", { text: label, attr: { value } });
     }
     context.value = this.contextMode;
     context.onchange = () => { this.contextMode = context.value; };
-    root.createEl("p", { text: "Skill" });
-    const skillSelect = root.createEl("select", { attr: { "aria-label": "Skill" } });
+    const skillSelect = field("Skill").createEl("select", { attr: { "aria-label": "Skill" } });
     skillSelect.createEl("option", { text: "No skill", attr: { value: "" } });
     let skills = [];
     this.plugin.skills().then(list => {
       skills = list;
       for (const skill of list) skillSelect.createEl("option", { text: skill.name, attr: { value: skill.id, title: skill.description } });
     }).catch(error => new Notice(`Could not load skills: ${error.message}`));
-    const search = root.createEl("button", { text: "Search vault text" });
-    const searchResults = root.createDiv();
+    const row = root.createDiv({ cls: "llms-row" });
+    const compact = row.createEl("button", { text: "Compact" });
+    const clear = row.createEl("button", { text: "Clear" });
+    const save = row.createEl("button", { text: "Save archive" });
+    const saveCopy = row.createEl("button", { text: "Save copy" });
+    const restore = row.createEl("button", { text: "Restore" });
+    const search = row.createEl("button", { text: "Search text" });
+    const searchResults = root.createDiv({ cls: "llms-results" });
     const archives = new ChatArchives(this.plugin.app.vault);
     const setBusy = busy => {
       this.busy = busy;
@@ -142,7 +144,7 @@ class ChatView extends ItemView {
           this.archive = { file: data.file, content: data.content };
           this.dirty = false;
           transcript.empty();
-          for (const message of this.messages) transcript.createEl("p", { text: `${message.role === "user" ? "You" : "Assistant"}: ${message.content}` });
+          for (const message of this.messages) addMessage(message.role === "user" ? "user" : "assistant", message.content);
         } catch (error) { new Notice(`Could not restore chat: ${error.message}`); }
         finally { setBusy(false); }
       }).open();
@@ -180,18 +182,18 @@ class ChatView extends ItemView {
       if (!question || this.busy) return;
       setBusy(true);
       input.value = "";
-      transcript.createEl("p", { text: `You: ${question}` });
+      addMessage("user", question);
       try {
         if (this.history.length >= 10) await compactHistory();
         const answer = await this.plugin.answer(question, this.history, this.summary, this.contextMode, skills.find(s => s.id === skillSelect.value) || null);
         this.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
         this.messages.push({ role: "user", content: question }, { role: "assistant", content: answer });
         this.dirty = true;
-        transcript.createEl("p", { text: `Assistant: ${answer}` });
+        addMessage("assistant", answer);
         await trySave();
       } catch (error) {
         input.value = question;
-        transcript.createEl("p", { text: `Error: ${error.message}` });
+        addMessage("error", `Error: ${error.message}`);
       } finally {
         setBusy(false);
       }

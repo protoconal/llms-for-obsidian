@@ -66,7 +66,7 @@ test("plugin selects SQLite only for desktop vaults and retains Chroma default",
   plugin.app.vault.adapter = {};
   assert.throws(() => plugin.knowledge(), /desktop vault/);
   plugin.settings.vectorStore = "chroma";
-  assert.equal(plugin.knowledge().store.constructor.name, "ChromaStore");
+  assert.ok(plugin.knowledge().store instanceof Plugin.test.ChromaStore);
 });
 
 test("SQLite removes previously indexed archives even if subsequent embedding fails", async t => {

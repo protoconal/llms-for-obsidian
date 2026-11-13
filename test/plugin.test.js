@@ -135,7 +135,7 @@ test("chat sends retrieved context and wiki never overwrites an existing page", 
     throw new Error("Unexpected request");
   };
   const plugin = new LLMPlugin();
-  plugin.settings = { ...DEFAULTS };
+  plugin.settings = { ...DEFAULTS, vectorStore: "chroma" };
   let created;
   plugin.app = {
     vault: {
@@ -159,6 +159,7 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    addClass() {}
     setText(text) { this.text = text; }
     createEl(tag, options = {}) {
       const child = new Element();
@@ -185,13 +186,14 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   respond = () => response({ message: { content: "hello" } });
   requests = [];
   await view.onOpen();
-  const [, transcript, input, advice, send, , clear] = view.contentEl.children;
+  const [, transcript, input, advice, send, , , row] = view.contentEl.children;
+  const clear = row.children[1];
   input.value = "debug my code";
   input.oninput();
   assert.match(advice.text, /Code-oriented/);
   input.value = "hi";
   await send.onclick();
-  assert.deepEqual(transcript.children.map(c => c.text), ["You: hi", "Assistant: hello"]);
+  assert.deepEqual(transcript.children.map(c => c.text), ["hi", "hello"]);
   assert.equal(requests.length, 1);
   clear.onclick();
   assert.deepEqual(transcript.children, []);
@@ -222,6 +224,7 @@ test("automatic compaction keeps original conversation and input when summarizat
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    addClass() {}
     setText(text) { this.text = text; }
     createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
     createDiv() { return this.createEl("div"); }
@@ -255,6 +258,7 @@ test("chat automatically compacts and sends the summary on the next question", a
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    addClass() {}
     setText(text) { this.text = text; }
     createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
     createDiv() { return this.createEl("div"); }
@@ -274,7 +278,8 @@ test("chat automatically compacts and sends the summary on the next question", a
   view.history = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: String(i) }));
   requests = [];
   respond = () => response({ message: { content: requests.length === 1 ? "summary" : "answer" } });
-  const [, , input, , send, , clear] = view.contentEl.children;
+  const [, , input, , send, , , row] = view.contentEl.children;
+  const clear = row.children[1];
   input.value = "next";
   await send.onclick();
   assert.equal(requests.length, 2);
@@ -302,6 +307,7 @@ test("archive persists the full transcript and compacted context and restores it
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    addClass() {}
     setText(text) { this.text = text; }
     createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
     createDiv() { return this.createEl("div"); }
@@ -318,7 +324,8 @@ test("archive persists the full transcript and compacted context and restores it
   const view = factory({});
   view.contentEl = new Element();
   await view.onOpen();
-  const [, transcript, input, , send, , clear, , restore] = view.contentEl.children;
+  const [, transcript, input, , send, , , row] = view.contentEl.children;
+  const [, clear, , , restore] = row.children;
   respond = () => response({ message: { content: "reply" } });
   for (let i = 0; i < 6; i++) {
     input.value = `question ${i}`;
@@ -347,6 +354,7 @@ test("archive save conflict preserves unsaved chat and blocks clear", async () =
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    addClass() {}
     setText() {}
     createEl() { const child = new Element(); this.children.push(child); return child; }
     createDiv() { return this.createEl(); }
@@ -364,7 +372,8 @@ test("archive save conflict preserves unsaved chat and blocks clear", async () =
   view.contentEl = new Element();
   await view.onOpen();
   respond = () => response({ message: { content: "reply" } });
-  const [, , input, , send, , clear, , , saveCopy] = view.contentEl.children;
+  const [, , input, , send, , , row] = view.contentEl.children;
+  const [, clear, , saveCopy] = row.children;
   input.value = "first";
   await send.onclick();
   const file = plugin.app.vault.getFiles()[0];
@@ -445,6 +454,7 @@ test("text search button opens a result and context selection reaches chat", asy
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    addClass() {}
     setText() {}
     createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
     createDiv() { return this.createEl(); }
@@ -465,7 +475,9 @@ test("text search button opens a result and context selection reaches chat", asy
   const view = factory({});
   view.contentEl = new Element();
   await view.onOpen();
-  const [, , input, , send, , , , , , , context, , , search, results] = view.contentEl.children;
+  const [, , input, , send, contextField, , row, results] = view.contentEl.children;
+  const context = contextField.children[1];
+  const search = row.children[5];
   input.value = "this phrase";
   await search.onclick();
   assert.match(results.children[0].text, /note\.md/);
@@ -519,4 +531,21 @@ test("skills load built-ins, plugin-folder and vault-folder skills", async () =>
   assert.deepEqual(custom.map(s => [s.id, s.context]), [["plugin:skills/Translate.md", "active"], ["vault:LLM Skills/Haiku.md", "none"]]);
   assert.equal(custom[1].description, "Write a haiku");
   assert.ok(skills.length >= 5);
+});
+
+test("built-in LocalStore persists, searches, isolates signatures and resets", async () => {
+  const { LocalStore } = LLMPlugin.test;
+  const files = {};
+  const adapter = { read: async p => { if (!(p in files)) throw new Error("ENOENT"); return files[p]; }, write: async (p, d) => { files[p] = d; } };
+  const s = { ...LLMPlugin.test.DEFAULTS, collection: "c1" };
+  const store = new LocalStore(s, adapter, "a/vectors.json");
+  await store.upsert([{ id: "x:0", path: "x.md", text: "x" }, { id: "y:0", path: "y.md", text: "y" }], [[1, 0], [0, 1]]);
+  await store.flush();
+  assert.deepEqual(await store.search([0.9, 0.1], 1), [{ path: "x.md", text: "x" }]);
+  assert.ok(JSON.parse(files["a/vectors.json"]).collections.c1);
+  await store.delete(["x:0"]);
+  assert.deepEqual(await store.list(), [{ id: "y:0", path: "y.md" }]);
+  await assert.rejects(new LocalStore({ ...s, embeddingModel: "other" }, adapter, "a/vectors.json").list(), /different embedding/);
+  await store.reset();
+  assert.deepEqual(await store.list(), []);
 });

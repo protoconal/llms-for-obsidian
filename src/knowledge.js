@@ -29,16 +29,20 @@ class KnowledgeBase {
     const existing = await this.store.list();
     const archives = existing.filter(e => isArchivePath(e.path)).map(e => e.id);
     if (archives.length) await this.store.delete(archives);
-    for (const file of changed) {
-      const chunks = chunkNote(file.path, await this.vault.cachedRead(file));
-      const vectors = chunks.length ? await this.models.embed(chunks.map(c => c.text)) : [];
-      await this.store.upsert(chunks, vectors);
-      const newIds = new Set(chunks.map(c => c.id));
-      await this.store.delete(existing.filter(e => e.path === file.path && !newIds.has(e.id)).map(e => e.id));
-      if (state) { const p = print(file); if (p) state.files[file.path] = p; else delete state.files[file.path]; }
+    try {
+      for (const file of changed) {
+        const chunks = chunkNote(file.path, await this.vault.cachedRead(file));
+        const vectors = chunks.length ? await this.models.embed(chunks.map(c => c.text)) : [];
+        await this.store.upsert(chunks, vectors);
+        const newIds = new Set(chunks.map(c => c.id));
+        await this.store.delete(existing.filter(e => e.path === file.path && !newIds.has(e.id)).map(e => e.id));
+        if (state) { const p = print(file); if (p) state.files[file.path] = p; else delete state.files[file.path]; }
+      }
+      await this.store.delete(existing.filter(e => typeof e.path === "string" && !isArchivePath(e.path) && !paths.has(e.path)).map(e => e.id));
+      for (const path of removed) delete state.files[path];
+    } finally {
+      if (typeof this.store.flush === "function") await this.store.flush();
     }
-    await this.store.delete(existing.filter(e => typeof e.path === "string" && !isArchivePath(e.path) && !paths.has(e.path)).map(e => e.id));
-    for (const path of removed) delete state.files[path];
     return files.length;
   }
   async search(query) {
