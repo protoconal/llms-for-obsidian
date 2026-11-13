@@ -22,7 +22,7 @@ Module._load = function (name, ...args) {
 };
 const LLMPlugin = require("../main.js");
 Module._load = load;
-const { DEFAULTS, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote } = LLMPlugin.test;
+const { DEFAULTS, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation } = LLMPlugin.test;
 const response = json => ({ status: 200, json });
 
 test("validates endpoint URLs and builds model requests", async () => {
@@ -138,6 +138,7 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   class Element {
     constructor() { this.children = []; this.value = ""; }
     empty() { this.children = []; }
+    setText(text) { this.text = text; }
     createEl(tag, options = {}) {
       const child = new Element();
       child.tag = tag;
@@ -163,7 +164,10 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   respond = () => response({ message: { content: "hello" } });
   requests = [];
   await view.onOpen();
-  const [, transcript, input, send, clear] = view.contentEl.children;
+  const [, transcript, input, advice, send, , clear] = view.contentEl.children;
+  input.value = "debug my code";
+  input.oninput();
+  assert.match(advice.text, /Code-oriented/);
   input.value = "hi";
   await send.onclick();
   assert.deepEqual(transcript.children.map(c => c.text), ["You: hi", "Assistant: hello"]);
@@ -171,4 +175,69 @@ test("plugin bootstraps commands and panel can send and clear a message", async 
   clear.onclick();
   assert.deepEqual(transcript.children, []);
   assert.deepEqual(view.history, []);
+});
+
+test("model guidance is local, task-specific and honest about unsupported image input", () => {
+  assert.match(recommendModel("Generate an embedding"), /Embedding model/);
+  assert.match(recommendModel("Debug my function"), /Code-oriented/);
+  assert.match(recommendModel("Prove this math theorem"), /Reasoning-oriented/);
+  assert.match(recommendModel("Describe this image"), /currently sends text only/);
+  assert.match(recommendModel("Summarize my notes"), /General-purpose/);
+});
+
+test("compaction summarizes older turns and preserves recent turns and prior summary", async () => {
+  const history = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: String(i) }));
+  let prompt;
+  const result = await compactConversation({ chat: async messages => { prompt = messages; return "new summary"; } }, "old summary", history);
+  assert.equal(result.summary, "new summary");
+  assert.deepEqual(result.history, history.slice(-4));
+  assert.deepEqual(JSON.parse(prompt[1].content), { previousSummary: "old summary", messages: history.slice(0, -4) });
+  assert.equal(history.length, 10);
+  const short = await compactConversation({ chat: () => { throw Error("not called"); } }, "summary", history.slice(-4));
+  assert.equal(short.summary, "summary");
+});
+
+test("automatic compaction keeps original conversation and input when summarization fails", async () => {
+  class Element {
+    constructor() { this.children = []; this.value = ""; }
+    empty() { this.children = []; }
+    setText(text) { this.text = text; }
+    createEl(tag, options = {}) { const child = new Element(); child.text = options.text; this.children.push(child); return child; }
+    createDiv() { return this.createEl("div"); }
+  }
+  const plugin = new LLMPlugin();
+  let factory;
+  plugin.loadData = async () => ({ useRetrieval: false });
+  plugin.registerView = (_, create) => { factory = create; };
+  plugin.addSettingTab = () => {};
+  plugin.addRibbonIcon = () => {};
+  plugin.addCommand = () => {};
+  plugin.app = {};
+  await plugin.onload();
+  const view = factory({});
+  view.contentEl = new Element();
+  await view.onOpen();
+  view.history = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: String(i) }));
+  view.summary = "previous";
+  respond = () => ({ status: 503, json: {} });
+  const [, transcript, input, , send] = view.contentEl.children;
+  input.value = "next question";
+  await send.onclick();
+  assert.equal(view.history.length, 10);
+  assert.equal(view.summary, "previous");
+  assert.equal(input.value, "next question");
+  assert.match(transcript.children.at(-1).text, /503/);
+  assert.equal(send.disabled, false);
+});
+
+test("answer includes compacted summary alongside recent history", async () => {
+  const plugin = new LLMPlugin();
+  plugin.settings = { ...DEFAULTS, useRetrieval: false };
+  requests = [];
+  respond = () => response({ message: { content: "ok" } });
+  await plugin.answer("next", [{ role: "user", content: "recent" }], "earlier summary");
+  const messages = JSON.parse(requests[0].body).messages;
+  assert.match(messages[1].content, /earlier summary/);
+  assert.equal(messages[2].content, "recent");
+  assert.equal(messages[3].content, "next");
 });
