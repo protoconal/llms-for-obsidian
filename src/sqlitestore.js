@@ -27,11 +27,28 @@ class SQLiteStore {
     const bundled = path.join(path.dirname(this.databasePath), "bin", process.platform === "win32" ? "sqlite3.exe" : "sqlite3");
     return fs.existsSync(bundled) ? bundled : "sqlite3";
   }
-  async execute(sql, guard = true) {
+  // Resolve sqlite-vec from the plugin folder (where node_modules is installed), then fall back to normal resolution.
+  extensionPath() {
+    const path = require("node:path");
     let extension;
-    try { extension = require("sqlite-vec").getLoadablePath(); }
-    catch (error) { throw new Error(`sqlite-vec extension unavailable: ${error.message}. See setup instructions.`); }
+    try {
+      const { createRequire } = require("node:module");
+      extension = createRequire(path.join(path.dirname(this.databasePath), "main.js"))("sqlite-vec").getLoadablePath();
+    } catch (first) {
+      try { extension = require("sqlite-vec").getLoadablePath(); }
+      catch (_) {
+        throw new Error(`sqlite-vec extension unavailable: ${first.message}. Install it in ${path.dirname(this.databasePath)} with "npm ci --omit=dev", or use a release zip. See setup instructions.`);
+      }
+    }
     if (/[\r\n]/.test(extension)) throw new Error("Invalid sqlite-vec installation path.");
+    return extension;
+  }
+  server() {
+    return sqliteManager.acquire({ cli: this.cliPath(), extension: this.extensionPath(), databasePath: this.databasePath });
+  }
+  // Starts the background process now rather than on the first query.
+  start() { this.server().start(); }
+  async execute(sql, guard = true) {
     const schema = `
       CREATE TABLE IF NOT EXISTS collections (name TEXT PRIMARY KEY, signature TEXT NOT NULL, dimensions INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS chunks (collection TEXT NOT NULL, id TEXT NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL, embedding TEXT NOT NULL, PRIMARY KEY(collection, id));
@@ -40,7 +57,7 @@ class SQLiteStore {
       CREATE TEMP TABLE collection_guard (ok INTEGER CHECK(ok=1));
       INSERT INTO collection_guard SELECT CASE WHEN signature=${this.signature} THEN 1 ELSE 0 END FROM collections WHERE name=${this.collection};
     ` : "");
-    const server = sqliteManager.acquire({ cli: this.cliPath(), extension, databasePath: this.databasePath });
+    const server = this.server();
     let output;
     try { output = await server.run(schema + sql); }
     catch (error) {
