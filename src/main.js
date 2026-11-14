@@ -32,10 +32,17 @@ module.exports = class LLMPlugin extends Plugin {
     this.addCommand({ id: "full-reindex-vault", name: "Full re-index of vault", callback: () => this.runIndex({ full: true }) });
     this.addCommand({ id: "run-skill", name: "Run skill", callback: () => this.pickSkill() });
     this.addCommand({ id: "generate-wiki", name: "Generate wiki page from active note", callback: () => this.generateWiki() });
+    if (this.app.workspace && this.app.workspace.onLayoutReady) this.app.workspace.onLayoutReady(() => this.startSqliteServer());
     if (typeof this.registerInterval === "function") {
       this.registerInterval(setInterval(() => this.tick(), TICK_MS));
       if (this.app.workspace.onLayoutReady) this.app.workspace.onLayoutReady(() => this.registerInterval(setTimeout(() => this.tick(), 30000)));
     }
+  }
+  // Spawns the SQLite background server when that backend is selected; failures are reported, not thrown.
+  startSqliteServer() {
+    if (this.settings.vectorStore !== "sqlite") return;
+    try { this.knowledge().store.start(); }
+    catch (error) { new Notice(`SQLite server not started: ${error.message}`); }
   }
   onunload() { sqliteManager.stopAll(); }
   sqliteServers() { return sqliteManager.list(); }

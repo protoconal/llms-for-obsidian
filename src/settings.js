@@ -104,7 +104,7 @@ class LLMSettings extends PluginSettingTab {
     new Setting(el).setName("Vector store").setHeading();
     new Setting(el).setName("Backend").setDesc("The built-in index needs no setup and works on desktop and mobile. The others are optional.")
       .addDropdown(d => d.addOption("local", "Built-in (no setup)").addOption("chroma", "ChromaDB server").addOption("sqlite", "SQLite + sqlite-vec (advanced)")
-        .setValue(plugin.settings.vectorStore).onChange(async value => { plugin.settings.vectorStore = value; await plugin.saveSettings(); this.display(); }));
+        .setValue(plugin.settings.vectorStore).onChange(async value => { plugin.settings.vectorStore = value; await plugin.saveSettings(); plugin.startSqliteServer(); this.display(); }));
     this.text(el, "Collection", "Use a separate collection for each vault and embedding model.", "collection");
     if (plugin.settings.vectorStore === "chroma") {
       this.text(el, "ChromaDB URL", "ChromaDB v2 server URL.", "chromaUrl");
@@ -124,7 +124,7 @@ class LLMSettings extends PluginSettingTab {
       const servers = plugin.sqliteServers();
       setting.setDesc(servers.length
         ? servers.map(s => `Running (pid ${s.pid}, ${s.requests} requests since ${new Date(s.startedAt).toLocaleTimeString()}): ${s.databasePath}`).join("\n") + "\nIt restarts automatically on the next index or search."
-        : "Not running. It starts automatically on the next index, search or stats request.");
+        : "Not running. It starts when SQLite is selected, and on the next index or search.");
     };
     describe();
     setting.addButton(b => b.setButtonText("Refresh").onClick(describe));
