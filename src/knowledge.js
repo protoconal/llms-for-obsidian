@@ -46,7 +46,7 @@ class KnowledgeBase {
     return files.length;
   }
   async search(query) {
-    const [vector] = await this.models.embed([query]);
+    const [vector] = await this.models.embed([query], "query");
     return (await this.store.search(vector)).filter(result => !isArchivePath(result.path));
   }
 }

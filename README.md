@@ -20,7 +20,11 @@ For future efficient hourly indexing, Obsidian already exposes [`TFile.stat`](ht
 4. Verify model names, endpoints and the collection name. Run **Index vault for retrieval** from the command palette. Switching stores does not migrate data; index again.
 5. Open **LLM Chat** from the ribbon or command palette. Use **Generate wiki page from active note** to create a wiki page next to the active note.
 
-Defaults connect to Ollama at `http://127.0.0.1:11434` and ChromaDB at `http://127.0.0.1:8000`. Both services must be reachable from the device running Obsidian. For other endpoints, select OpenAI-compatible and provide a base URL including `/v1`, model name, and optional bearer token. The **Use OpenRouter** button configures its chat URL and provider; supply an OpenRouter model and API key. Embeddings remain independently configurable. Disable retrieval in settings to chat without a vector store.
+Defaults connect to Ollama at `http://127.0.0.1:11434` and ChromaDB at `http://127.0.0.1:8000`. Both services must be reachable from the device running Obsidian. For other endpoints, select OpenAI-compatible and provide a base URL including `/v1`, model name, and optional bearer token. The **Use OpenRouter** buttons configure the chat or embedding URL and provider independently; supply an OpenRouter model and API key in each tab. Disable retrieval in settings to chat without a vector store.
+
+Use **Test connection** in the Chat or Embeddings tab before indexing. Chat sends a short prompt with a 16-token reply cap; embeddings test both document and query requests and report vector dimensions. Tests send no vault content, do not change the index, and may incur provider charges. Perplexity `pplx-embed-v2-*` models (including `perplexity/pplx-embed-v2-context-9b`) receive the required `input_type: document` when indexing and `input_type: query` when searching. Chunks are embedded individually, not with whole-document contextualization.
+
+API failures show the HTTP status, endpoint path, model and provider response in the error message and Obsidian developer console. Network failures also include endpoint/model context. Diagnostics are truncated to 2,000 characters and redact exact matches of the configured API key and submitted text; request headers and payloads are not logged. Review provider error messages before sharing logs.
 
 ## Chat, search and archives
 

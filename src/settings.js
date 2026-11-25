@@ -1,4 +1,5 @@
-const { PluginSettingTab, Setting } = require("obsidian");
+const { PluginSettingTab, Setting, Notice } = require("obsidian");
+const { ModelClient } = require("./models");
 const { mount, unmount } = require("svelte");
 const StoragePanel = require("./StoragePanel.svelte").default;
 
@@ -71,6 +72,37 @@ class LLMSettings extends PluginSettingTab {
       .addOption("ollama", "Ollama").addOption("openai", "OpenAI-compatible")
       .setValue(plugin.settings[key]).onChange(async value => { plugin.settings[key] = value; await plugin.saveSettings(); }));
   }
+  testConnection(el, kind) {
+    const label = kind === "chat" ? "Chat" : "Embedding";
+    const setting = new Setting(el).setName(`Test ${label.toLowerCase()} API`)
+      .setDesc("Sends a short sample, not vault content. Remote providers may charge for this request.");
+    setting.addButton(b => b.setButtonText("Test connection").onClick(async () => {
+      b.setDisabled(true).setButtonText("Testing...");
+      setting.setDesc("Testing...");
+      try {
+        const settings = { ...this.plugin.settings, chatMaxTokens: 16 };
+        const models = new ModelClient(settings);
+        let result;
+        if (kind === "chat") {
+          await models.chat([{ role: "user", content: "Reply with the word OK." }]);
+          result = "Chat API test succeeded.";
+        } else {
+          const [document] = await models.embed(["This is a connection test."]);
+          const [query] = await models.embed(["connection test"], "query");
+          if (document.length !== query.length) throw new Error("Document and query embedding dimensions differ.");
+          result = `Embedding API test succeeded: ${document.length} dimensions (document and query).`;
+        }
+        setting.setDesc(result);
+        new Notice(result);
+      } catch (error) {
+        const message = `${label} API test failed: ${error.message}`;
+        setting.setDesc(message);
+        new Notice(message, 10000);
+      } finally {
+        b.setDisabled(false).setButtonText("Test connection");
+      }
+    }));
+  }
   chatTab(el) {
     const { plugin } = this;
     new Setting(el).setName("Connection").setHeading();
@@ -85,6 +117,7 @@ class LLMSettings extends PluginSettingTab {
     this.text(el, "Base URL", "Ollama root or OpenAI-compatible API base, including /v1.", "chatUrl");
     this.text(el, "Model", "Model name as understood by the endpoint.", "chatModel");
     this.text(el, "API key", "Optional bearer token.", "chatKey", true);
+    this.testConnection(el, "chat");
     new Setting(el).setName("Behavior").setHeading();
     this.number(el, "Max reply tokens", "Caps chat reply length; 0 leaves it to the provider.", "chatMaxTokens", true);
     new Setting(el).setName("Use retrieval in chat").setDesc("Embed each question and send matching excerpts to the chat endpoint.")
@@ -93,11 +126,20 @@ class LLMSettings extends PluginSettingTab {
       }));
   }
   embeddingsTab(el) {
+    const { plugin } = this;
     new Setting(el).setName("Embedding connection").setHeading();
+    new Setting(el).setName("OpenRouter preset").setDesc("Sets the embedding provider and URL; enter your model and API key below.")
+      .addButton(b => b.setButtonText("Use OpenRouter").onClick(async () => {
+        plugin.settings.embeddingProvider = "openai";
+        plugin.settings.embeddingUrl = "https://openrouter.ai/api/v1";
+        await plugin.saveSettings();
+        this.display();
+      }));
     this.provider(el, "Embedding provider", "embeddingProvider");
     this.text(el, "Base URL", "Ollama root or OpenAI-compatible API base, including /v1.", "embeddingUrl");
     this.text(el, "Model", "Use the same model for indexing and searching.", "embeddingModel");
     this.text(el, "API key", "Optional bearer token.", "embeddingKey", true);
+    this.testConnection(el, "embeddings");
   }
   storageTab(el) {
     const { plugin } = this;

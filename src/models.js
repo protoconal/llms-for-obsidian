@@ -11,6 +11,26 @@ function endpoint(base, path) {
 }
 
 async function jsonRequest(url, method = "GET", body, key = "") {
+  const target = new URL(url);
+  const context = `${method} ${target.origin}${target.pathname}${body && body.model ? ` (model: ${body.model})` : ""}`;
+  const sensitive = [key, ...(body && Array.isArray(body.input) ? body.input : [body && body.input]),
+    ...(body && Array.isArray(body.documents) ? body.documents : []),
+    ...(body && Array.isArray(body.messages) ? body.messages.map(m => m.content) : [])]
+    .filter(value => typeof value === "string" && value.length).sort((a, b) => b.length - a.length);
+  const sanitize = value => {
+    let text = String(value);
+    for (const value of sensitive) {
+      text = text.split(value).join("[redacted]");
+      const escaped = JSON.stringify(value).slice(1, -1);
+      if (escaped !== value) text = text.split(escaped).join("[redacted]");
+    }
+    return text.replace(/\s+/g, " ").slice(0, 2000);
+  };
+  const fail = message => {
+    const error = new Error(sanitize(message));
+    console.error("[LLMs for Obsidian]", error.message);
+    return error;
+  };
   const headers = { "Content-Type": "application/json" };
   if (key) {
     const { protocol, hostname } = new URL(url);
@@ -18,19 +38,32 @@ async function jsonRequest(url, method = "GET", body, key = "") {
     if (protocol !== "https:" && !loopback) throw new Error("Refusing to send an API key over plain HTTP to a non-local host. Use HTTPS.");
     headers.Authorization = "Bearer " + key;
   }
-  const response = await requestUrl({
-    url, method, headers, body: body === undefined ? undefined : JSON.stringify(body), throw: false
-  });
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Request failed (${response.status}) at ${new URL(url).origin}. Check endpoint and configuration.`);
+  let response;
+  try {
+    response = await requestUrl({
+      url, method, headers, body: body === undefined ? undefined : JSON.stringify(body), throw: false
+    });
+  } catch (error) {
+    throw fail(`Request could not complete: ${context}. ${error.message}`);
   }
-  return response.json;
+  if (response.status < 200 || response.status >= 300) {
+    let detail = response.text;
+    if (!detail) {
+      try { detail = JSON.stringify(response.json); }
+      catch (_) { detail = "Response body was not valid JSON."; }
+    }
+    throw fail(`Request failed (HTTP ${response.status}): ${context}. ${detail || "No response body. Check endpoint and configuration."}`);
+  }
+  try { return response.json; }
+  catch (_) {
+    throw fail(`Invalid JSON response: ${context} (HTTP ${response.status}).`);
+  }
 }
 
 class ModelClient {
   constructor(settings) { this.settings = settings; }
 
-  async embed(texts) {
+  async embed(texts, inputType = "document") {
     const s = this.settings;
     let vectors;
     if (s.embeddingProvider === "ollama") {
@@ -39,7 +72,8 @@ class ModelClient {
       vectors = result.embeddings;
     } else {
       const result = await jsonRequest(endpoint(s.embeddingUrl, "/embeddings"), "POST",
-        { model: s.embeddingModel, input: texts }, s.embeddingKey);
+        { model: s.embeddingModel, input: texts,
+          ...(/^(?:perplexity\/)?pplx-embed-v2-/.test(s.embeddingModel) && { input_type: inputType }) }, s.embeddingKey);
       vectors = Array.isArray(result.data) && result.data.slice().sort((a, b) => a.index - b.index).map(x => x.embedding);
     }
     if (!Array.isArray(vectors) || vectors.length !== texts.length ||
