@@ -190,4 +190,4 @@ module.exports = class LLMPlugin extends Plugin {
   }
 };
 
-module.exports.test = { sqliteManager, DEFAULTS, endpoint, ModelClient, ChromaStore, SQLiteStore, LocalStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes, parseArchive, loadSkills };
+module.exports.test = { sqliteManager, DEFAULTS, LLMSettings, endpoint, ModelClient, ChromaStore, SQLiteStore, LocalStore, KnowledgeBase, chunkNote, contextMessage, recommendModel, compactConversation, searchNotes, parseArchive, loadSkills };

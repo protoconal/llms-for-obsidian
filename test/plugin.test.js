@@ -14,8 +14,24 @@ class FuzzySuggestModal {
 }
 class Notice { constructor(message) { Notice.messages.push(message); } }
 Notice.messages = [];
+class Setting {
+  constructor() { Setting.instances.push(this); }
+  setName(name) { this.name = name; return this; }
+  setDesc(description) { this.description = description; return this; }
+  addButton(callback) {
+    const button = {
+      setButtonText(text) { this.text = text; return this; },
+      setDisabled(disabled) { this.disabled = disabled; return this; },
+      onClick(click) { this.click = click; return this; }
+    };
+    this.button = button;
+    callback(button);
+    return this;
+  }
+}
+Setting.instances = [];
 const obsidian = {
-  Plugin, PluginSettingTab, ItemView, FuzzySuggestModal, Notice, Setting: class {},
+  Plugin, PluginSettingTab, ItemView, FuzzySuggestModal, Notice, Setting,
   requestUrl: async options => {
     requests.push(options);
     return respond(options);
@@ -27,7 +43,7 @@ Module._load = function (name, ...args) {
 };
 const LLMPlugin = require("../main.js");
 Module._load = load;
-const { DEFAULTS, loadSkills, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation, searchNotes, parseArchive } = LLMPlugin.test;
+const { DEFAULTS, LLMSettings, loadSkills, endpoint, ModelClient, ChromaStore, KnowledgeBase, chunkNote, recommendModel, compactConversation, searchNotes, parseArchive } = LLMPlugin.test;
 const response = json => ({ status: 200, json });
 function mockVault() {
   const files = new Map();
@@ -74,6 +90,106 @@ test("OpenAI-compatible endpoints use bearer auth and ordered embeddings", async
   await assert.rejects(models.embed(["bad"]), /invalid vectors/);
   respond = () => ({ status: 401, json: {} });
   await assert.rejects(models.chat([]), /401/);
+});
+
+test("Perplexity v2 embeddings distinguish indexing documents from search queries", async () => {
+  requests = [];
+  const models = new ModelClient({ ...DEFAULTS, embeddingProvider: "openai",
+    embeddingUrl: "https://openrouter.ai/api/v1", embeddingModel: "perplexity/pplx-embed-v2-context-9b" });
+  respond = () => response({ data: [{ index: 0, embedding: [1, 2] }] });
+  const kb = new KnowledgeBase({ getMarkdownFiles: () => [{ path: "note.md" }], cachedRead: async () => "note text" },
+    models, { list: async () => [], upsert: async () => {}, delete: async () => {}, search: async () => [] });
+  await kb.index();
+  await kb.search("question");
+  assert.equal(requests[0].url, "https://openrouter.ai/api/v1/embeddings");
+  assert.deepEqual(JSON.parse(requests[0].body), {
+    model: "perplexity/pplx-embed-v2-context-9b", input: ["note text"], input_type: "document"
+  });
+  assert.equal(JSON.parse(requests[1].body).input_type, "query");
+  await new ModelClient({ ...models.settings, embeddingModel: "openai/text-embedding-3-small" }).embed(["text"]);
+  assert.equal(Object.hasOwn(JSON.parse(requests[2].body), "input_type"), false);
+});
+
+test("API errors expose bounded provider details without keys or echoed input", async t => {
+  const logs = [];
+  t.mock.method(console, "error", (...args) => logs.push(args.join(" ")));
+  const key = "private-api-key";
+  const text = "Private note\nwith details";
+  const models = new ModelClient({ ...DEFAULTS, embeddingProvider: "openai",
+    embeddingUrl: "https://openrouter.ai/api/v1", embeddingModel: "perplexity/pplx-embed-v2-context-9b", embeddingKey: key });
+  respond = () => ({ status: 400, json: { error: { message: "input_type is required",
+    metadata: { raw: `Bearer ${key}; ${text}` } } } });
+  await assert.rejects(models.embed([text]), error => {
+    assert.match(error.message, /HTTP 400.*POST https:\/\/openrouter.ai\/api\/v1\/embeddings/);
+    assert.match(error.message, /perplexity\/pplx-embed-v2-context-9b.*input_type is required/);
+    assert.ok(!error.message.includes(key));
+    assert.ok(!error.message.includes("Private note"));
+    assert.match(error.message, /\[redacted\]/);
+    return true;
+  });
+  respond = () => ({ status: 502, text: "Upstream unavailable. " + "x".repeat(5000),
+    get json() { throw new Error("not JSON"); } });
+  await assert.rejects(models.embed(["text"]), error => {
+    assert.match(error.message, /HTTP 502.*Upstream unavailable/);
+    assert.ok(error.message.length <= 2000);
+    return true;
+  });
+  respond = () => { throw new Error(`Connection refused: ${key}`); };
+  await assert.rejects(models.embed(["text"]), /Request could not complete.*embeddings.*Connection refused: \[redacted\]/);
+  respond = () => ({ status: 400, text: `Invalid request: Bearer ${key}; ${text}` });
+  await assert.rejects(new ModelClient({ ...DEFAULTS, chatKey: key }).chat([{ role: "user", content: text }]),
+    /HTTP 400.*Invalid request: Bearer \[redacted\]; \[redacted\]/);
+  assert.equal(logs.length, 4);
+  assert.ok(logs.every(log => !log.includes(key) && !log.includes("Private note")));
+});
+
+test("malformed successful API responses report endpoint context", async t => {
+  t.mock.method(console, "error", () => {});
+  respond = () => ({ status: 200, get json() { throw new SyntaxError("Unexpected token"); } });
+  await assert.rejects(new ModelClient({ ...DEFAULTS }).chat([]), /Invalid JSON response.*\/api\/chat.*HTTP 200/);
+});
+
+test("connection tests use sample input, report dimensions and restore buttons on failure", async t => {
+  t.mock.method(console, "error", () => {});
+  requests = [];
+  const plugin = { settings: { ...DEFAULTS, useRetrieval: true, chatMaxTokens: 1000,
+    embeddingProvider: "openai", embeddingUrl: "https://openrouter.ai/api/v1",
+    embeddingModel: "perplexity/pplx-embed-v2-context-9b" } };
+  const tab = new LLMSettings({}, plugin);
+  tab.testConnection({}, "embeddings");
+  const embedding = Setting.instances.at(-1);
+  let finish;
+  respond = () => new Promise(resolve => { finish = resolve; });
+  const pending = embedding.button.click();
+  assert.equal(embedding.button.disabled, true);
+  assert.equal(embedding.button.text, "Testing...");
+  respond = () => response({ data: [{ embedding: [3, 4] }] });
+  finish(response({ data: [{ embedding: [1, 2] }] }));
+  await pending;
+  assert.match(embedding.description, /succeeded: 2 dimensions/);
+  assert.deepEqual(requests.map(r => JSON.parse(r.body).input_type), ["document", "query"]);
+  assert.equal(embedding.button.disabled, false);
+
+  respond = () => response({ data: [{ embedding: requests.length % 2 ? [1] : [1, 2] }] });
+  await embedding.button.click();
+  assert.match(embedding.description, /failed: Document and query embedding dimensions differ/);
+  assert.equal(embedding.button.disabled, false);
+
+  tab.testConnection({}, "chat");
+  const chat = Setting.instances.at(-1);
+  respond = () => response({ message: { content: "OK" } });
+  await chat.button.click();
+  assert.match(chat.description, /Chat API test succeeded/);
+  const body = JSON.parse(requests.at(-1).body);
+  assert.equal(body.options.num_predict, 16);
+  assert.deepEqual(body.messages, [{ role: "user", content: "Reply with the word OK." }]);
+  assert.equal(plugin.settings.chatMaxTokens, 1000);
+  respond = () => ({ status: 400, json: { error: { message: "Unknown model" } } });
+  await chat.button.click();
+  assert.match(chat.description, /Chat API test failed:.*HTTP 400.*Unknown model/);
+  assert.equal(chat.button.disabled, false);
+  assert.equal(chat.button.text, "Test connection");
+  assert.equal(Notice.messages.at(-1), chat.description);
 });
 
 test("Chroma v2 adapter creates, lists, upserts, searches and deletes", async () => {
